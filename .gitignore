@@ -1,0 +1,58 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Node.js
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Backend de IA
+ia_backend/venv/
+ia_backend/.env
+ia_backend/faiss_indexes/
+ia_backend/__pycache__/
+ia_backend/**/*.pyc
+
+# Firebase Functions (ya tienes uno específico, pero por si acaso)
+functions/lib/
+functions/node_modules/ # Cubierto por node_modules/ general, pero no hace daño ser explícito
+functions/.firebase/
+functions/firebase-debug.log*
+functions/*.log
+
+# Otros
+.env
+.env.*
+!/.env.example 
+# Si tienes un .env.example general en la raíz
+
+# Archivos de compilación específicos
+# .tsbuildinfo
+
+# Archivos sensibles
+mi_nueva_api_key.txt # Asegúrate que el de functions/ también esté cubierto
+
+# Python
+*.py[cod]
+*$py.class
+
+# FAISS Indexes (si los regeneras localmente y no quieres versionarlos)
+# Si quieres versionar los índices, comenta la línea de ia_backend/faiss_indexes/

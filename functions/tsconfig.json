@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "module": "NodeNext", // Updated to NodeNext for better compatibility with modern Node.js features
+    "moduleResolution": "nodenext", // Complements "module": "NodeNext"
+    "esModuleInterop": true, // Allows default imports from CommonJS modules
+    "target": "es2020", // Target modern ECMAScript version, Node 22 supports this well
+    "strict": true, // Enable all strict type-checking options
+    "noImplicitReturns": true, // Report error when not all code paths in function return a value.
+    "noUnusedLocals": true, // Report errors on unused local variables.
+    // "noUnusedParameters": true, // Report errors on unused parameters. (Optional, can be noisy)
+    "sourceMap": true, // Generate corresponding '.map' file.
+    "outDir": "lib", // Redirect output structure to the directory.
+    "skipLibCheck": true, // Skip type checking of all declaration files (*.d.ts). CRITICAL FIX.
+    "forceConsistentCasingInFileNames": true // Disallow inconsistently-cased references to the same file.
+  },
+  "compileOnSave": true,
+  "include": [
+    "src/**/*.ts" // Ensure it only includes files from the src directory
+  ],
+  "exclude": [
+    "node_modules", // Exclude node_modules
+    "lib" // Exclude the output directory
+  ]
+}

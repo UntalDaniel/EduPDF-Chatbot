@@ -1,0 +1,25 @@
+    [
+      {
+        "origin": ["http://localhost:5173"],
+        "method": ["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"],
+        "responseHeader": [
+          "Content-Type",
+          "Access-Control-Allow-Origin",
+          "Authorization",
+          "X-Goog-Resumable"
+        ],
+        "maxAgeSeconds": 3600
+      },
+      {
+        "origin": ["https://chatbot-pdf-7076d.firebaseapp.com", "https://chatbot-pdf-7076d.web.app"],
+        "method": ["GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS"],
+        "responseHeader": [
+          "Content-Type",
+          "Access-Control-Allow-Origin",
+          "Authorization",
+          "X-Goog-Resumable"
+        ],
+        "maxAgeSeconds": 3600
+      }
+    ]
+    

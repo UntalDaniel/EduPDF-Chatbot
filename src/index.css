@@ -1,0 +1,49 @@
+/* src/index.css */
+
+/* Directivas de Tailwind CSS */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Estilos globales personalizados adicionales */
+body {
+  font-family: 'Inter', system-ui, Avenir, Helvetica, Arial, sans-serif;
+  line-height: 1.6;
+  font-weight: 400;
+  color-scheme: dark; /* Asumiendo un tema oscuro */
+  
+  /* El color de fondo general se maneja con clases de Tailwind en App.tsx o body */
+  /* ej. class="bg-slate-900 text-slate-100" */
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Scrollbar personalizado (opcional, puedes descomentar y ajustar si lo deseas globalmente) */
+/* ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+::-webkit-scrollbar-track {
+    background: #1e293b; 
+}
+::-webkit-scrollbar-thumb {
+    background: #334155; 
+    border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: #475569; 
+}
+*/
+
+/* Animación para el modal (si no se quiere usar <style jsx global>) */
+@keyframes modalEnter {
+    from { opacity: 0; transform: scale(0.95); }
+    to { opacity: 1; transform: scale(1); }
+}
+.animate-modalEnter {
+    animation: modalEnter 0.2s ease-out forwards;
+}
