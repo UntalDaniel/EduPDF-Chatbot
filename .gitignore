@@ -13,6 +13,9 @@ dist/
 dist-ssr/
 *.local
 
+# Firebase Admin SDK credentials (NUNCA versionar)
+ia_backend/config_firebase/*.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

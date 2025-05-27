@@ -1,6 +1,6 @@
 // src/App.tsx
 import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, Outlet, Link } from 'react-router-dom'; // <- AÑADIDO Link aquí
+import { BrowserRouter as Router, Routes, Route, Navigate, Outlet, Link } from 'react-router-dom';
 import type { User } from 'firebase/auth';
 import { onAuthStateChanged, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
 import { app as firebaseAppInstance, auth as firebaseAuthInstance } from './firebase/firebaseConfig';
@@ -10,6 +10,7 @@ import AuthScreen from './screens/AuthScreen';
 import TeacherDashboard from './screens/TeacherDashboard';
 import CreateActivityScreen from './screens/CreateActivityScreen';
 import ChatWithPdfScreen from './screens/ChatWithPdfScreen';
+import CreateExamScreen from './screens/CreateExamScreen'; // <--- IMPORTACIÓN NUEVA
 
 import { AlertTriangle, Home, Loader2 } from 'lucide-react';
 
@@ -89,6 +90,7 @@ const NavigateBasedOnAuth: React.FC = () => {
         if (auth.currentUser) {
             console.log("NavigateBasedOnAuth: User already available on mount or from previous token sign-in.", auth.currentUser.uid);
             setInitialAuthAttempted(true);
+            // No es necesario llamar a setLoading(false) aquí porque onAuthStateChanged lo hará.
             return;
         }
 
@@ -100,33 +102,34 @@ const NavigateBasedOnAuth: React.FC = () => {
                 await signInWithCustomToken(auth, initialAuthToken);
             } catch (error) {
                 console.error("NavigateBasedOnAuth: Error with signInWithCustomToken, trying anonymous:", error);
-                if (!auth.currentUser) {
+                if (!auth.currentUser) { // Solo intentar anónimo si signInWithCustomToken falló Y no hay usuario
                     try { await signInAnonymously(auth); } catch (e) { console.error("Anon sign-in failed after custom token error", e); }
                 }
             }
         } else { 
             try {
                 console.log("NavigateBasedOnAuth: No custom token and no current user, attempting signInAnonymously...");
-                if (!auth.currentUser) {
+                if (!auth.currentUser) { // Solo intentar anónimo si realmente no hay usuario
                     await signInAnonymously(auth);
                 }
             } catch (error) {
                 console.error("NavigateBasedOnAuth: Error with signInAnonymously:", error);
             }
         }
-        setInitialAuthAttempted(true);
+        setInitialAuthAttempted(true); // Marcar que el intento inicial se hizo
+        // onAuthStateChanged se encargará de setUser y setLoading(false)
     };
 
-    if (!initialAuthAttempted) {
+    if (!initialAuthAttempted) { // Solo ejecutar una vez
         attemptInitialAuth();
     }
 
     const unsubscribe = onAuthStateChanged(auth, (currentUser: User | null) => { 
       setUser(currentUser);
-      setLoading(false); 
+      setLoading(false); // Asegurar que loading se ponga en false después del primer chequeo de auth
     });
     return () => unsubscribe();
-  }, [initialAuthAttempted, auth]);
+  }, [initialAuthAttempted, auth]); // Depender de initialAuthAttempted para que no se re-ejecute innecesariamente
 
   if (loading || !initialAuthAttempted) { 
     return (
@@ -164,6 +167,7 @@ const App: React.FC = () => {
           <Route index element={<TeacherDashboard />} />
           <Route path="create-activity/:pdfId" element={<CreateActivityScreen />} />
           <Route path="chat/:pdfId" element={<ChatWithPdfScreen />} /> 
+          <Route path="create-exam/:pdfId" element={<CreateExamScreen />} /> {/* <-- RUTA AÑADIDA --> */}
         </Route>
         
         <Route path="/" element={<NavigateBasedOnAuth />} />

@@ -1,55 +1,62 @@
 // src/types/examTypes.ts
 
+// Interfaz para preguntas de Verdadero/Falso que se mostrarán en el frontend
 export interface TrueFalseQuestion {
   id: string;
-  text: string;
-  type: "V_F";
-  correct_answer: boolean;
-  explanation?: string;
+  text: string; // El texto de la pregunta
+  type: "V_F"; // Tipo de pregunta
+  correct_answer: boolean; // La respuesta correcta (true o false)
+  explanation?: string; // Explicación opcional
 }
 
+// Interfaz para preguntas de Opción Múltiple que se mostrarán en el frontend
 export interface MultipleChoiceQuestion {
   id: string;
-  text: string;
-  type: "MC";
-  options: string[];
-  correct_answer: string; // El texto de la opción correcta
-  explanation?: string;
+  text: string; // El texto de la pregunta
+  type: "MC"; // Tipo de pregunta
+  options: string[]; // Lista de opciones de respuesta
+  correct_answer_index: number; // Índice (0-based) de la opción correcta en la lista 'options'
+  explanation?: string; // Explicación opcional
 }
 
+// Tipo unión para representar cualquier tipo de pregunta en el frontend
 export type Question = TrueFalseQuestion | MultipleChoiceQuestion;
 
+// Configuración para la cantidad de preguntas por tipo
 export interface QuestionConfig {
-  vf_questions: number;
-  mc_questions: number;
+  vf_questions: number; // Número de preguntas Verdadero/Falso
+  mc_questions: number; // Número de preguntas Opción Múltiple
   // Futuro: open_questions, fill_in_the_blanks_questions
 }
 
+// Datos para la solicitud de generación de examen desde el frontend al backend
 export interface ExamGenerationRequestData {
-  pdf_id: string; // O el identificador que uses para el PDF
-  sample_text_from_pdf?: string; // Temporal si es necesario para desarrollo del backend
-  title: string;
-  question_config: QuestionConfig;
-  difficulty: "facil" | "medio" | "dificil";
+  pdf_id: string; // ID del PDF base para el examen
+  title: string; // Título del examen
+  question_config: QuestionConfig; // Configuración de tipos y cantidad de preguntas
+  difficulty: "facil" | "medio" | "dificil"; // Nivel de dificultad
+  language: string; // Idioma para las preguntas (ej. "es", "en")
+  model_id?: string; // Modelo de IA a utilizar (opcional, el backend tiene un default)
 }
 
+// Datos del examen generado que el backend devuelve al frontend
 export interface GeneratedExamData {
-  exam_id?: string; // El backend lo puede retornar null inicialmente
-  pdf_id: string;
-  title: string;
-  difficulty: string;
-  questions: Question[];
-  // user_id?: string;
+  pdf_id: string; // ID del PDF base del examen
+  title: string; // Título del examen
+  difficulty: "facil" | "medio" | "dificil"; // Dificultad del examen
+  questions: Question[]; // Lista de preguntas generadas
+  error?: string; // Campo para mensajes de error si la generación falla parcial o totalmente
 }
 
-// Para el guardado en Firestore (simplificado por ahora)
+// (Opcional) Interfaz para guardar un examen en Firestore desde el frontend
 export interface ExamForFirestore {
-  userId: string;
-  pdfId: string;
-  title: string;
-  difficulty: "facil" | "medio" | "dificil";
-  config: QuestionConfig;
-  questions: Question[];
-  createdAt: any; // Firestore Timestamp
+  userId: string; // ID del usuario que crea el examen
+  pdfId: string; // ID del PDF asociado
+  title: string; // Título del examen
+  difficulty: "facil" | "medio" | "dificil"; // Dificultad
+  config: QuestionConfig; // Configuración de preguntas utilizada
+  questions: Question[]; // Las preguntas generadas (tal como se muestran en el frontend)
+  createdAt: any; // Timestamp de Firestore para la fecha de creación
+  language?: string; // Idioma del examen (opcional)
+  model_id_used?: string; // Modelo de IA utilizado (opcional)
 }
-
