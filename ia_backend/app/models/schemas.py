@@ -11,7 +11,8 @@ class PDFProcessRequest(BaseModel):
 class PDFProcessResponse(BaseModel):
     message: str
     pdf_id: str
-    filename: Optional[str] = None 
+    filename: Optional[str] = None
+    status: Optional[str] = None # Añadido para reflejar el estado del procesamiento
 
 class QueryRequest(BaseModel): 
     pdf_id: str = Field(..., description="ID of the processed PDF to query against")
@@ -32,7 +33,6 @@ class ChatResponse(BaseModel):
     sources: Optional[List[SourceDocument]] = Field(default=None, description="List of source documents.")
     error: Optional[str] = None
 
-# Definición de ChatRequestBody que estaba causando el ImportError
 class ChatRequestBody(BaseModel): 
     user_question: str
     language: Optional[str] = 'es'
@@ -59,7 +59,8 @@ class FeedbackResponse(BaseModel):
 # --- Schemas para Generación de Exámenes ---
 class QuestionConfig(BaseModel):
     vf_questions: int = Field(default=0, ge=0, le=10, description="Number of True/False questions")
-    mc_questions: int = Field(default=3, ge=0, le=10, description="Number of Multiple Choice questions")
+    mc_questions: int = Field(default=0, ge=0, le=10, description="Number of Multiple Choice questions")
+    open_questions: int = Field(default=0, ge=0, le=5, description="Number of Open-ended questions") # Añadido
 
 class ExamGenerationRequest(BaseModel): 
     pdf_id: str = Field(description="ID of the PDF document to base the exam on")
@@ -68,17 +69,20 @@ class ExamGenerationRequest(BaseModel):
     difficulty: Literal["facil", "medio", "dificil"] = Field(default="medio", description="Difficulty level of the questions")
     language: str = Field(default="es", description="Language for the exam questions (e.g., 'es', 'en')")
     model_id: Optional[str] = Field(default="gemini-1.5-flash-latest", description="AI Model to use for exam generation")
+    # sample_text_from_pdf: Optional[str] = None # Para pruebas, si se necesita
 
 class TrueFalseQuestion(BaseModel):
     id: str = Field(description="Unique ID for the question (e.g., UUID)")
-    question_text: str = Field(..., min_length=1, description="The question text")
+    # question_text: str = Field(..., min_length=1, description="The question text") # Se usará 'text' como en el frontend
+    text: str = Field(..., min_length=1, description="The question text")
     type: Literal["V_F"] = "V_F" 
     correct_answer: bool = Field(description="The correct boolean answer")
     explanation: Optional[str] = Field(default=None, description="Explanation for the answer")
 
 class MultipleChoiceQuestion(BaseModel):
     id: str = Field(description="Unique ID for the question (e.g., UUID)")
-    question_text: str = Field(..., min_length=1, description="The question text") 
+    # question_text: str = Field(..., min_length=1, description="The question text")
+    text: str = Field(..., min_length=1, description="The question text")
     type: Literal["MC"] = "MC" 
     options: List[str] = Field(..., min_items=2, max_items=6, description="List of choices")
     correct_answer_index: int = Field(..., ge=0, description="0-based index of the correct option in the 'options' list")
@@ -86,13 +90,21 @@ class MultipleChoiceQuestion(BaseModel):
 
     @field_validator('correct_answer_index')
     @classmethod
-    def check_correct_answer_index(cls, v, info):
+    def check_correct_answer_index(cls, v: int, info: Any): # Usar Any para info si no se usa explícitamente el tipo FieldValidationInfo
         # Pydantic v2 usa info.data para acceder a otros campos del modelo
         if 'options' in info.data and v >= len(info.data['options']):
             raise ValueError('correct_answer_index must be a valid index in the options list')
         return v
 
-Question = Union[TrueFalseQuestion, MultipleChoiceQuestion] 
+# Nuevo Schema para Preguntas Abiertas (respuesta al frontend)
+class OpenQuestion(BaseModel):
+    id: str = Field(description="Unique ID for the question (e.g., UUID)")
+    # question_text: str = Field(..., min_length=1, description="The question text")
+    text: str = Field(..., min_length=1, description="The question text")
+    type: Literal["OPEN"] = "OPEN"
+    explanation: Optional[str] = Field(default=None, description="Explanation or answer guide for the teacher")
+
+Question = Union[TrueFalseQuestion, MultipleChoiceQuestion, OpenQuestion] # Añadido OpenQuestion
 
 class GeneratedExam(BaseModel): 
     pdf_id: str
@@ -101,6 +113,7 @@ class GeneratedExam(BaseModel):
     questions: List[Question] = Field(description="List of generated questions")
     error: Optional[str] = None 
 
+# --- Schemas para la estructura de datos que esperamos del LLM ---
 class LLMGeneratedTrueFalse(BaseModel):
     question_text: str = Field(description="El texto de la pregunta de verdadero o falso.")
     answer: bool = Field(description="La respuesta correcta (true o false).")
@@ -112,6 +125,13 @@ class LLMGeneratedMultipleChoice(BaseModel):
     correct_option_text: str = Field(description="El texto de la opción de respuesta correcta. Debe ser uno de los ítems en 'options'.")
     explanation: Optional[str] = Field(default=None, description="Una breve explicación.")
 
+# Nuevo Schema para Preguntas Abiertas generadas por el LLM
+class LLMGeneratedOpenQuestion(BaseModel):
+    question_text: str = Field(description="El texto de la pregunta abierta.")
+    # Para preguntas abiertas, el LLM podría generar una guía de respuesta o puntos clave esperados.
+    explanation_or_answer_guide: Optional[str] = Field(default=None, description="Guía de respuesta o puntos clave para la pregunta abierta.")
+
 class LLMGeneratedQuestions(BaseModel): 
     true_false_questions: Optional[List[LLMGeneratedTrueFalse]] = Field(default_factory=list)
     multiple_choice_questions: Optional[List[LLMGeneratedMultipleChoice]] = Field(default_factory=list)
+    open_questions: Optional[List[LLMGeneratedOpenQuestion]] = Field(default_factory=list) # Añadido

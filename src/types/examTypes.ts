@@ -19,14 +19,25 @@ export interface MultipleChoiceQuestion {
   explanation?: string; // Explicación opcional
 }
 
+// Interfaz para Preguntas Abiertas
+export interface OpenQuestion {
+  id: string;
+  text: string; // El texto de la pregunta
+  type: "OPEN"; // Tipo de pregunta
+  // Las preguntas abiertas no tienen una 'correct_answer' predefinida de la misma manera
+  // Podrían tener una 'sample_answer' o 'grading_rubric' en el futuro
+  explanation?: string; // Explicación opcional o guía de respuesta para el docente
+}
+
+
 // Tipo unión para representar cualquier tipo de pregunta en el frontend
-export type Question = TrueFalseQuestion | MultipleChoiceQuestion;
+export type Question = TrueFalseQuestion | MultipleChoiceQuestion | OpenQuestion; // Añadido OpenQuestion
 
 // Configuración para la cantidad de preguntas por tipo
 export interface QuestionConfig {
   vf_questions: number; // Número de preguntas Verdadero/Falso
   mc_questions: number; // Número de preguntas Opción Múltiple
-  // Futuro: open_questions, fill_in_the_blanks_questions
+  open_questions: number; // Número de preguntas Abiertas
 }
 
 // Datos para la solicitud de generación de examen desde el frontend al backend
@@ -44,7 +55,7 @@ export interface GeneratedExamData {
   pdf_id: string; // ID del PDF base del examen
   title: string; // Título del examen
   difficulty: "facil" | "medio" | "dificil"; // Dificultad del examen
-  questions: Question[]; // Lista de preguntas generadas
+  questions: Question[]; // Lista de preguntas generadas (ahora puede incluir OpenQuestion)
   error?: string; // Campo para mensajes de error si la generación falla parcial o totalmente
 }
 
@@ -54,7 +65,7 @@ export interface ExamForFirestore {
   pdfId: string; // ID del PDF asociado
   title: string; // Título del examen
   difficulty: "facil" | "medio" | "dificil"; // Dificultad
-  config: QuestionConfig; // Configuración de preguntas utilizada
+  config: QuestionConfig; // Configuración de preguntas utilizada (ya incluye open_questions)
   questions: Question[]; // Las preguntas generadas (tal como se muestran en el frontend)
   createdAt: any; // Timestamp de Firestore para la fecha de creación
   language?: string; // Idioma del examen (opcional)
