@@ -1,6 +1,29 @@
 # ia_backend/app/models/schemas.py
 from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Union, Literal, Dict, Any
+import uuid 
+from enum import Enum # <--- IMPORTACIÓN AÑADIDA
+
+# --- Enums ---
+class QuestionType(str, Enum): 
+    TRUE_FALSE = "V_F" 
+    MULTIPLE_CHOICE = "MC"
+    OPEN = "OPEN"
+    FILL_IN_THE_BLANK = "FITB" 
+
+class DifficultyLevel(str, Enum): 
+    FACIL = "facil"
+    MEDIO = "medio"
+    DIFICIL = "dificil"
+
+class Language(str, Enum): 
+    ES = "es"
+    EN = "en"
+
+class ModelChoice(str, Enum): 
+    GEMINI_1_5_FLASH = "gemini-1.5-flash-latest"
+    GEMINI_1_5_PRO = "gemini-1.5-pro-latest"
+
 
 # --- Schemas existentes para RAG y procesamiento de PDF ---
 class PDFProcessRequest(BaseModel):
@@ -12,7 +35,7 @@ class PDFProcessResponse(BaseModel):
     message: str
     pdf_id: str
     filename: Optional[str] = None
-    status: Optional[str] = None # Añadido para reflejar el estado del procesamiento
+    status: Optional[str] = None 
 
 class QueryRequest(BaseModel): 
     pdf_id: str = Field(..., description="ID of the processed PDF to query against")
@@ -35,8 +58,8 @@ class ChatResponse(BaseModel):
 
 class ChatRequestBody(BaseModel): 
     user_question: str
-    language: Optional[str] = 'es'
-    model_id: Optional[str] = Field(default=None, description="ID del modelo de IA a usar para el chat RAG")
+    language: Optional[str] = 'es' # Debería ser Language enum si es consistente
+    model_id: Optional[str] = Field(default=None, description="ID del modelo de IA a usar para el chat RAG") # Debería ser ModelChoice enum
     chat_history: Optional[List[MessageInput]] = Field(default_factory=list)
 
 class QueryResponse(BaseModel): 
@@ -57,81 +80,145 @@ class FeedbackResponse(BaseModel):
     feedback_id: str
 
 # --- Schemas para Generación de Exámenes ---
-class QuestionConfig(BaseModel):
-    vf_questions: int = Field(default=0, ge=0, le=10, description="Number of True/False questions")
-    mc_questions: int = Field(default=0, ge=0, le=10, description="Number of Multiple Choice questions")
-    open_questions: int = Field(default=0, ge=0, le=5, description="Number of Open-ended questions") # Añadido
 
-class ExamGenerationRequest(BaseModel): 
-    pdf_id: str = Field(description="ID of the PDF document to base the exam on")
-    title: str = Field(default="Nuevo Examen", min_length=1, max_length=200, description="Title of the exam")
-    question_config: QuestionConfig = Field(description="Configuration for the types and number of questions")
-    difficulty: Literal["facil", "medio", "dificil"] = Field(default="medio", description="Difficulty level of the questions")
-    language: str = Field(default="es", description="Language for the exam questions (e.g., 'es', 'en')")
-    model_id: Optional[str] = Field(default="gemini-1.5-flash-latest", description="AI Model to use for exam generation")
-    # sample_text_from_pdf: Optional[str] = None # Para pruebas, si se necesita
+class QuestionConfigForExam(BaseModel): 
+    num_true_false: int = Field(default=0, ge=0, le=10, description="Number of True/False questions")
+    num_multiple_choice: int = Field(default=0, ge=0, le=10, description="Number of Multiple Choice questions")
+    num_open_questions: int = Field(default=0, ge=0, le=5, description="Number of Open-ended questions")
+    num_fill_in_the_blank: int = Field(default=0, ge=0, le=5, description="Number of Fill-in-the-Blank questions") 
+    
+    difficulty: DifficultyLevel = Field(default=DifficultyLevel.MEDIO)
+    language: Language = Field(default=Language.ES) # Usar el Enum
+    model_id: Optional[ModelChoice] = Field(default=ModelChoice.GEMINI_1_5_FLASH) # Usar el Enum
+    user_id: str 
 
-class TrueFalseQuestion(BaseModel):
-    id: str = Field(description="Unique ID for the question (e.g., UUID)")
-    # question_text: str = Field(..., min_length=1, description="The question text") # Se usará 'text' como en el frontend
-    text: str = Field(..., min_length=1, description="The question text")
-    type: Literal["V_F"] = "V_F" 
-    correct_answer: bool = Field(description="The correct boolean answer")
-    explanation: Optional[str] = Field(default=None, description="Explanation for the answer")
+    class Config:
+        populate_by_name = True 
+        use_enum_values = True 
 
-class MultipleChoiceQuestion(BaseModel):
-    id: str = Field(description="Unique ID for the question (e.g., UUID)")
-    # question_text: str = Field(..., min_length=1, description="The question text")
-    text: str = Field(..., min_length=1, description="The question text")
-    type: Literal["MC"] = "MC" 
-    options: List[str] = Field(..., min_items=2, max_items=6, description="List of choices")
-    correct_answer_index: int = Field(..., ge=0, description="0-based index of the correct option in the 'options' list")
-    explanation: Optional[str] = Field(default=None, description="Explanation for the answer")
+class BaseQuestionOutput(BaseModel):
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    text: str = Field(..., min_length=1)
+    explanation: Optional[str] = Field(default=None)
+    type: QuestionType 
+
+class TrueFalseQuestionOutput(BaseQuestionOutput):
+    type: Literal[QuestionType.TRUE_FALSE] = QuestionType.TRUE_FALSE
+    correct_answer: bool
+
+class MultipleChoiceQuestionOutput(BaseQuestionOutput):
+    type: Literal[QuestionType.MULTIPLE_CHOICE] = QuestionType.MULTIPLE_CHOICE
+    options: List[str] = Field(..., min_length=2, max_length=6)
+    correct_answer_index: int = Field(..., ge=0)
 
     @field_validator('correct_answer_index')
     @classmethod
-    def check_correct_answer_index(cls, v: int, info: Any): # Usar Any para info si no se usa explícitamente el tipo FieldValidationInfo
-        # Pydantic v2 usa info.data para acceder a otros campos del modelo
-        if 'options' in info.data and v >= len(info.data['options']):
+    def check_correct_answer_index(cls, v: int, info: Any): # info.data es el dict de datos del modelo
+        options_data = info.data.get('options')
+        if options_data and v >= len(options_data):
             raise ValueError('correct_answer_index must be a valid index in the options list')
         return v
 
-# Nuevo Schema para Preguntas Abiertas (respuesta al frontend)
-class OpenQuestion(BaseModel):
-    id: str = Field(description="Unique ID for the question (e.g., UUID)")
-    # question_text: str = Field(..., min_length=1, description="The question text")
-    text: str = Field(..., min_length=1, description="The question text")
-    type: Literal["OPEN"] = "OPEN"
-    explanation: Optional[str] = Field(default=None, description="Explanation or answer guide for the teacher")
+class OpenQuestionOutput(BaseQuestionOutput):
+    type: Literal[QuestionType.OPEN] = QuestionType.OPEN
 
-Question = Union[TrueFalseQuestion, MultipleChoiceQuestion, OpenQuestion] # Añadido OpenQuestion
+class FillInTheBlankQuestionOutput(BaseQuestionOutput): 
+    type: Literal[QuestionType.FILL_IN_THE_BLANK] = QuestionType.FILL_IN_THE_BLANK
+    answers: List[str] = Field(..., min_length=1, description="Lista de respuestas correctas para los blanks, en orden.")
 
-class GeneratedExam(BaseModel): 
+QuestionOutput = Union[TrueFalseQuestionOutput, MultipleChoiceQuestionOutput, OpenQuestionOutput, FillInTheBlankQuestionOutput] 
+
+class ExamGenerationRequestFrontend(BaseModel): 
+    pdf_id: str
+    title: str = Field(default="Nuevo Examen", min_length=1, max_length=200)
+    question_config: Dict[str, int] 
+    difficulty: DifficultyLevel = Field(default=DifficultyLevel.MEDIO)
+    language: Language = Field(default=Language.ES) # Usar el Enum
+    model_id: Optional[ModelChoice] = Field(default=ModelChoice.GEMINI_1_5_FLASH) # Usar el Enum
+    user_id: str 
+
+    class Config:
+        use_enum_values = True
+
+class GeneratedExamResponse(BaseModel): 
     pdf_id: str
     title: str
-    difficulty: Literal["facil", "medio", "dificil"]
-    questions: List[Question] = Field(description="List of generated questions")
+    difficulty: DifficultyLevel # Usar el Enum
+    questions: List[QuestionOutput]
+    config_used: Optional[QuestionConfigForExam] = None 
     error: Optional[str] = None 
 
-# --- Schemas para la estructura de datos que esperamos del LLM ---
+    class Config:
+        use_enum_values = True
+
 class LLMGeneratedTrueFalse(BaseModel):
-    question_text: str = Field(description="El texto de la pregunta de verdadero o falso.")
-    answer: bool = Field(description="La respuesta correcta (true o false).")
-    explanation: Optional[str] = Field(default=None, description="Una breve explicación.")
+    question_text: str
+    answer: bool
+    explanation: Optional[str] = None
 
 class LLMGeneratedMultipleChoice(BaseModel):
-    question_text: str = Field(description="El texto de la pregunta de opción múltiple.")
-    options: List[str] = Field(description="Una lista de opciones de respuesta (idealmente 3-4 opciones).")
-    correct_option_text: str = Field(description="El texto de la opción de respuesta correcta. Debe ser uno de los ítems en 'options'.")
-    explanation: Optional[str] = Field(default=None, description="Una breve explicación.")
+    question_text: str
+    options: List[str] = Field(min_length=2, max_length=6)
+    correct_option_text: str
+    explanation: Optional[str] = None
 
-# Nuevo Schema para Preguntas Abiertas generadas por el LLM
+    @field_validator('options')
+    @classmethod
+    def check_options_length(cls, v: List[str]):
+        if not (2 <= len(v) <= 6) : 
+             raise ValueError('Multiple choice questions must have between 2 and 6 options.')
+        return v
+
+    @field_validator('correct_option_text')
+    @classmethod
+    def check_correct_option_in_options(cls, v: str, info: Any): # info.data es el dict de datos del modelo
+        options_data = info.data.get('options')
+        if options_data and v.strip().lower() not in [opt.strip().lower() for opt in options_data]:
+            raise ValueError(f"Correct option text '{v}' must be one of the provided options: {options_data}")
+        return v
+
 class LLMGeneratedOpenQuestion(BaseModel):
-    question_text: str = Field(description="El texto de la pregunta abierta.")
-    # Para preguntas abiertas, el LLM podría generar una guía de respuesta o puntos clave esperados.
-    explanation_or_answer_guide: Optional[str] = Field(default=None, description="Guía de respuesta o puntos clave para la pregunta abierta.")
+    question_text: str
+    explanation_or_answer_guide: Optional[str] = None
+
+class LLMGeneratedFillInTheBlank(BaseModel): 
+    question_text_with_placeholders: str = Field(description="Texto de la pregunta con placeholders como __BLANK__ o [BLANK]")
+    correct_answers: List[str] = Field(min_length=1, description="Lista de respuestas correctas en orden de los placeholders.")
+    explanation: Optional[str] = None
 
 class LLMGeneratedQuestions(BaseModel): 
     true_false_questions: Optional[List[LLMGeneratedTrueFalse]] = Field(default_factory=list)
     multiple_choice_questions: Optional[List[LLMGeneratedMultipleChoice]] = Field(default_factory=list)
-    open_questions: Optional[List[LLMGeneratedOpenQuestion]] = Field(default_factory=list) # Añadido
+    open_questions: Optional[List[LLMGeneratedOpenQuestion]] = Field(default_factory=list)
+    fill_in_the_blank_questions: Optional[List[LLMGeneratedFillInTheBlank]] = Field(default_factory=list)
+
+class RegenerateQuestionRequest(BaseModel):
+    pdf_id: str 
+    question_to_regenerate: Dict[str, Any] 
+    exam_config: QuestionConfigForExam 
+    existing_questions: Optional[List[Dict[str, Any]]] = None
+
+    class Config:
+        use_enum_values = True
+        json_schema_extra = { 
+            "example": {
+                "pdf_id": "some_pdf_id_123",
+                "question_to_regenerate": {
+                    "id": "q_original_fitb_1",
+                    "text": "El sol sale por el __BLANK__ y se pone por el __BLANK__.",
+                    "type": "FITB", 
+                    "answers": ["este", "oeste"],
+                },
+                "exam_config": {
+                    "num_true_false": 0, 
+                    "num_multiple_choice": 0,
+                    "num_open_questions": 0,
+                    "num_fill_in_the_blank": 0, 
+                    "difficulty": "medio",
+                    "language": "es",
+                    "model_id": "gemini-1.5-flash-latest",
+                    "user_id": "user_abc_789"
+                },
+                "existing_questions": []
+            }
+        }

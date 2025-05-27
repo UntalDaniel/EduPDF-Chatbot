@@ -1,7 +1,7 @@
 # ia_backend/app/main.py
 import logging
 import os 
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union # Asegúrate que Union esté importado
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body, Depends, Query 
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv # No es estrictamente necesario si config.py ya lo hace, pero no daña.
@@ -11,28 +11,35 @@ import uvicorn
 from app.services.pdf_processor import (
     # process_pdf_from_storage_url, # Descomenta si tienes este endpoint
     process_uploaded_pdf, 
-    list_user_pdfs_from_db, # Asegúrate que esta función exista y sea síncrona si la llamas sin await
+    list_user_pdfs_from_db, 
     delete_pdf_from_firestore_and_storage 
 )
-# CORRECCIÓN DE IMPORTACIÓN Y LLAMADA:
-from app.services.rag_chain import get_rag_response, delete_pdf_vector_store_namespace # Importar la función
-# from app.services.rag_chain import get_vector_store_for_pdf_retrieval # Descomenta si la usas directamente aquí
-
+from app.services.rag_chain import get_rag_response, delete_pdf_vector_store_namespace
 from app.services.feedback_service import save_feedback 
-from app.services.exam_generator_service import generate_exam_questions_service
+# Servicios de examen
+from app.services.exam_generator_service import (
+    generate_exam_questions_service,
+    regenerate_one_question_service # <--- NUEVA IMPORTACIÓN
+)
 
 
 from app.models.schemas import (
-    # PDFProcessRequest, # Descomenta si usas process_pdf_from_storage_url_endpoint
+    # PDFProcessRequest, 
     PDFProcessResponse,
-    # QueryRequest, # Descomenta si usas query_pdf_endpoint
+    # QueryRequest, 
     QueryResponse,   
     ChatRequestBody, 
     ChatResponse,    
     FeedbackRequest,
     FeedbackResponse,
-    ExamGenerationRequest, 
-    GeneratedExam          
+    ExamGenerationRequestFrontend as ExamGenerationRequest, # Usando el alias definido en el servicio
+    GeneratedExamResponse as GeneratedExam,                 # Usando el alias definido en el servicio
+    # --- NUEVAS IMPORTACIONES DE SCHEMAS ---
+    RegenerateQuestionRequest,
+    QuestionOutput, # El Union de los tipos de pregunta de salida
+    TrueFalseQuestionOutput,
+    MultipleChoiceQuestionOutput,
+    OpenQuestionOutput
 )
 from app.core.config import settings 
 
@@ -72,17 +79,7 @@ async def root():
 
 # @app.post("/process-pdf-url/", response_model=PDFProcessResponse, tags=["PDF Processing"])
 # async def process_pdf_from_url_endpoint(request: PDFProcessRequest):
-#     logger.info(f"Processing PDF from URL for user {request.user_id}, pdf_id {request.pdf_id}, url: {request.file_url}")
-#     try:
-#         result = await process_pdf_from_storage_url(
-#             pdf_id=request.pdf_id, 
-#             user_id=request.user_id, 
-#             file_url=request.file_url
-#         )
-#         return PDFProcessResponse(message=result.get("message", "Error processing PDF."), pdf_id=result.get("pdf_id", request.pdf_id), filename=result.get("filename"))
-#     except Exception as e:
-#         logger.error(f"Error processing PDF from URL {request.file_url}: {e}", exc_info=True)
-#         raise HTTPException(status_code=500, detail=f"Error procesando PDF desde URL: {str(e)}")
+#     # ... (tu código existente)
 
 @app.post("/upload-pdf/", response_model=PDFProcessResponse, tags=["PDF Processing"])
 async def upload_and_process_pdf_endpoint(
@@ -90,6 +87,7 @@ async def upload_and_process_pdf_endpoint(
     pdf_id: str = Form(...), 
     file: UploadFile = File(...)
 ):
+    # ... (tu código existente para este endpoint)
     logger.info(f"Uploading PDF for user_id: {user_id}, pdf_id: {pdf_id}, filename: {file.filename}")
     if not file.filename:
         raise HTTPException(status_code=400, detail="El archivo PDF no tiene nombre.")
@@ -101,7 +99,7 @@ async def upload_and_process_pdf_endpoint(
     except HTTPException as http_exc:
         logger.error(f"HTTPException during PDF upload for user {user_id}: {http_exc.detail}")
         raise http_exc
-    except RuntimeError as r_err: # Capturar el RuntimeError de embeddings no disponibles
+    except RuntimeError as r_err: 
         logger.error(f"RuntimeError during PDF upload for user {user_id}: {r_err}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(r_err))
     except Exception as e:
@@ -109,13 +107,11 @@ async def upload_and_process_pdf_endpoint(
         raise HTTPException(status_code=500, detail=f"Un error inesperado ocurrió: {str(e)}")
 
 @app.get("/pdfs/{user_id}/", response_model=List[Dict[str, Any]], tags=["PDF Management"])
-async def list_user_pdfs_endpoint(user_id: str): # Cambiado a async si list_user_pdfs_from_db es async
+async def list_user_pdfs_endpoint(user_id: str): 
+    # ... (tu código existente para este endpoint)
     logger.info(f"Listing PDFs for user_id: {user_id}")
     try:
-        # Si list_user_pdfs_from_db es síncrona (como está ahora en pdf_processor.py)
         pdfs = list_user_pdfs_from_db(user_id) 
-        # Si la hicieras async en pdf_processor.py, entonces:
-        # pdfs = await list_user_pdfs_from_db(user_id) 
         return pdfs
     except Exception as e:
         logger.error(f"Error listing PDFs for user {user_id}: {e}", exc_info=True)
@@ -123,9 +119,9 @@ async def list_user_pdfs_endpoint(user_id: str): # Cambiado a async si list_user
 
 @app.delete("/pdfs/{pdf_id}/", status_code=200, tags=["PDF Management"]) 
 async def delete_pdf_endpoint(pdf_id: str, user_id: str = Query(..., description="ID del usuario propietario del PDF para verificación.")): 
+    # ... (tu código existente para este endpoint, asegurándote que las llamadas a servicios sean correctas)
     logger.info(f"Attempting to delete PDF with id: {pdf_id} for user: {user_id}")
     try:
-        # CORRECCIÓN: Llamada síncrona a la función importada
         pinecone_deleted = delete_pdf_vector_store_namespace(pdf_id) 
         if pinecone_deleted:
             logger.info(f"Successfully deleted vector store namespace '{pdf_id}' from Pinecone.")
@@ -135,9 +131,7 @@ async def delete_pdf_endpoint(pdf_id: str, user_id: str = Query(..., description
         db_storage_deleted = await delete_pdf_from_firestore_and_storage(pdf_id, user_id)
         if not db_storage_deleted:
             logger.warning(f"Failed to delete PDF metadata/storage for pdf_id: {pdf_id} by user: {user_id}.")
-            # Considerar si esto debería ser un error que impida el 200 OK.
-            # Por ahora, si Pinecone se borró, se considera un éxito parcial.
-
+            
         return {"message": f"Solicitud de eliminación para PDF {pdf_id} procesada. Verifique los logs para detalles."}
     except PermissionError as pe: 
         logger.error(f"Permission denied for deleting PDF {pdf_id} by user {user_id}: {pe}")
@@ -148,45 +142,16 @@ async def delete_pdf_endpoint(pdf_id: str, user_id: str = Query(..., description
         logger.error(f"Error deleting PDF {pdf_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Fallo al eliminar PDF {pdf_id}: {str(e)}")
 
-
 # @app.post("/query-pdf/", response_model=QueryResponse, tags=["RAG Querying"]) 
 # async def query_pdf_endpoint(request: QueryRequest): 
-#     logger.info(f"Querying PDF ID: {request.pdf_id} with query: '{request.query}' by user: {request.user_id}")
-#     try:
-#         chat_response_obj = await get_rag_response(
-#             pdf_id=request.pdf_id,
-#             query_text=request.query,
-#             chat_history_from_frontend=request.chat_history, 
-#             user_id=request.user_id,
-#         )
-
-#         if chat_response_obj.error or not chat_response_obj.answer:
-#             detail = chat_response_obj.error or "No se pudo generar una respuesta o PDF no encontrado."
-#             status = 404 if "not found" in detail.lower() else 500
-#             raise HTTPException(status_code=status, detail=detail)
-
-#         source_chunks_for_response: Optional[List[Dict[str, Any]]] = None
-#         if chat_response_obj.sources:
-#             source_chunks_for_response = [
-#                 {"page_content": doc.page_content, "metadata": doc.metadata} for doc in chat_response_obj.sources
-#             ]
-        
-#         return QueryResponse(answer=chat_response_obj.answer, source_chunks=source_chunks_for_response)
-
-#     except FileNotFoundError as e: 
-#         logger.warning(f"Recurso no encontrado para query: {request.pdf_id}. Error: {e}") 
-#         raise HTTPException(status_code=404, detail=f"Vector store para PDF ID '{request.pdf_id}' no encontrado. ¿Ha sido procesado?")
-#     except HTTPException: 
-#         raise
-#     except Exception as e:
-#         logger.error(f"Error querying PDF {request.pdf_id}: {e}", exc_info=True)
-#         raise HTTPException(status_code=500, detail=f"Error procesando tu consulta: {str(e)}")
+#     # ... (tu código existente)
 
 @app.post("/chat-rag/{pdf_id}/", response_model=ChatResponse, tags=["RAG Querying"])
 async def chat_rag_endpoint(
     pdf_id: str,
     request_body: ChatRequestBody
 ):
+    # ... (tu código existente para este endpoint)
     logger.info(f"Chat RAG request for PDF ID: {pdf_id}, User question: '{request_body.user_question}'")
     try:
         response_obj = await get_rag_response(
@@ -194,10 +159,9 @@ async def chat_rag_endpoint(
             query_text=request_body.user_question,
             chat_history_from_frontend=[msg.model_dump() for msg in request_body.chat_history] if request_body.chat_history else None,
             language=request_body.language or 'es',
-            model_id=request_body.model_id # El servicio usará un default si es None
+            model_id=request_body.model_id
         )
         if response_obj.error:
-             # Si el error es por embeddings no inicializados, podría ser un 503 Service Unavailable
              if "embeddings model not initialized" in response_obj.error.lower() or "servicio de ia no está configurado" in response_obj.error.lower():
                  raise HTTPException(status_code=503, detail=response_obj.error)
              raise HTTPException(status_code=500, detail=response_obj.error)
@@ -211,6 +175,7 @@ async def chat_rag_endpoint(
 
 @app.post("/feedback/", response_model=FeedbackResponse, tags=["Feedback"])
 async def submit_feedback_endpoint(request: FeedbackRequest): 
+    # ... (tu código existente para este endpoint)
     logger.info(f"Received feedback for pdf_id: {request.pdf_id}, query: '{request.query}', helpful: {request.is_helpful}")
     try:
         feedback_id = await save_feedback(request) 
@@ -221,32 +186,29 @@ async def submit_feedback_endpoint(request: FeedbackRequest):
 
 @app.post("/exams/generate-questions", response_model=GeneratedExam, tags=["Exams"])
 async def api_generate_exam_questions_endpoint( 
-    request: ExamGenerationRequest = Body(...) 
+    request: ExamGenerationRequest = Body(...) # Usando el alias para el tipo de request
+    # El schema ExamGenerationRequest (alias de ExamGenerationRequestFrontend) incluye 'user_id: str',
+    # por lo que FastAPI validará automáticamente su presencia.
 ):
     logger.info(f"Received request to generate exam for PDF ID: {request.pdf_id}, Title: '{request.title}'")
-    logger.debug(f"Question Config: {request.question_config}, Difficulty: {request.difficulty}, Language: {request.language}, Model: {request.model_id}")
+    # El user_id estará disponible en request.user_id si el frontend lo envía correctamente.
+    logger.debug(f"Question Config from frontend: {request.question_config}, Difficulty: {request.difficulty}, Language: {request.language}, Model: {request.model_id}, UserID: {request.user_id}")
     
     try:
         generated_exam_data = await generate_exam_questions_service(request)
 
         if generated_exam_data is None: 
             logger.error(f"Exam generation service returned None for PDF {request.pdf_id}.")
-            raise HTTPException(
-                status_code=500, 
-                detail="El servicio de generación de exámenes no pudo completar la solicitud."
-            )
+            raise HTTPException(status_code=500, detail="El servicio de generación de exámenes no pudo completar la solicitud.")
         
         if generated_exam_data.error:
             logger.warning(f"Error during exam generation for PDF {request.pdf_id}: {generated_exam_data.error}")
             status_code = 500 
-            if "contenido del documento recuperado es demasiado corto" in generated_exam_data.error.lower():
-                status_code = 400 
-            elif "modelo de ia no pudo generar" in generated_exam_data.error.lower():
-                status_code = 502 
-            
+            if "contenido del documento recuperado es demasiado corto" in generated_exam_data.error.lower(): status_code = 400 
+            elif "modelo de ia no pudo generar" in generated_exam_data.error.lower(): status_code = 502 
             raise HTTPException(status_code=status_code, detail=generated_exam_data.error)
 
-        if not generated_exam_data.questions and (request.question_config.vf_questions > 0 or request.question_config.mc_questions > 0):
+        if not generated_exam_data.questions and (request.question_config.get("vf_questions",0) > 0 or request.question_config.get("mc_questions",0) > 0 or request.question_config.get("open_questions",0) > 0) :
             logger.warning(f"Exam generation for PDF {request.pdf_id} resulted in no valid questions despite being requested.")
         
         logger.info(f"Successfully generated {len(generated_exam_data.questions)} questions for exam '{generated_exam_data.title}'.")
@@ -256,10 +218,41 @@ async def api_generate_exam_questions_endpoint(
         raise
     except Exception as e: 
         logger.error(f"Unexpected error during exam generation for PDF {request.pdf_id}: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Ocurrió un error interno inesperado al generar el examen: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Ocurrió un error interno inesperado al generar el examen: {str(e)}")
+
+
+# --- NUEVO ENDPOINT PARA REGENERAR PREGUNTA ESPECÍFICA ---
+@app.post(
+    "/exams/regenerate-question/", 
+    response_model=QuestionOutput, # El tipo de respuesta es una única pregunta (Union de los tipos de salida)
+    tags=["Exams"],
+    summary="Regenerate a Specific Exam Question",
+    description="Regenerates a single exam question based on PDF content, the original question, exam configuration, and other existing questions to ensure diversity."
+)
+async def regenerate_specific_question_endpoint(
+    request: RegenerateQuestionRequest # El schema de la solicitud que definimos
+):
+    logger.info(f"Received request to regenerate specific question for PDF ID: {request.pdf_id}, Original Q ID: {request.question_to_regenerate.get('id', 'N/A')}")
+    try:
+        regenerated_question = await regenerate_one_question_service(request)
+
+        if not regenerated_question:
+            logger.error(f"Question regeneration failed for PDF ID: {request.pdf_id}. Service returned no question.")
+            raise HTTPException(status_code=500, detail="El modelo de IA no pudo regenerar la pregunta o ocurrió un error interno.")
+        
+        logger.info(f"Successfully regenerated question (New ID: {regenerated_question.id}) for PDF ID: {request.pdf_id}")
+        return regenerated_question # Devuelve la pregunta regenerada
+
+    except ValueError as ve: # Errores de validación o lógica de negocio (ej. PDF corto, datos inválidos)
+        logger.warning(f"Validation error during specific question regeneration for PDF ID {request.pdf_id}: {str(ve)}", exc_info=True)
+        raise HTTPException(status_code=422, detail=str(ve)) # Unprocessable Entity
+    except RuntimeError as rte: # Errores críticos del servicio (ej. fallo del LLM)
+        logger.error(f"Runtime error during specific question regeneration for PDF ID {request.pdf_id}: {str(rte)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(rte))
+    except Exception as e: # Otros errores inesperados
+        logger.error(f"Unexpected error in regenerate_specific_question_endpoint for PDF {request.pdf_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error interno inesperado al regenerar la pregunta: {str(e)}")
+
 
 if __name__ == "__main__":
     host_to_run = getattr(settings, "HOST", "127.0.0.1")
@@ -269,7 +262,7 @@ if __name__ == "__main__":
 
     logger.info(f"Starting Uvicorn server on host {host_to_run} and port {port_to_run}, reload: {reload_flag_run}, log_level: {log_level_str_run}")
     uvicorn.run(
-        "main:app", # Asegúrate que 'main' sea el nombre de este archivo (main.py)
+        "main:app", 
         host=host_to_run,
         port=port_to_run, 
         reload=reload_flag_run,

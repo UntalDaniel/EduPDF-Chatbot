@@ -1,73 +1,96 @@
 // src/types/examTypes.ts
+import type { Timestamp, FieldValue } from 'firebase/firestore';
 
-// Interfaz para preguntas de Verdadero/Falso que se mostrarán en el frontend
-export interface TrueFalseQuestion {
+// Asumiendo que ya tienes BaseQuestion y otros tipos definidos.
+// Solo mostraré las adiciones y modificaciones relevantes.
+
+export interface BaseQuestion {
   id: string;
-  text: string; // El texto de la pregunta
-  type: "V_F"; // Tipo de pregunta
-  correct_answer: boolean; // La respuesta correcta (true o false)
-  explanation?: string; // Explicación opcional
+  text: string;
+  explanation?: string;
+  // El 'type' se definirá en los tipos específicos
 }
 
-// Interfaz para preguntas de Opción Múltiple que se mostrarán en el frontend
-export interface MultipleChoiceQuestion {
-  id: string;
-  text: string; // El texto de la pregunta
-  type: "MC"; // Tipo de pregunta
-  options: string[]; // Lista de opciones de respuesta
-  correct_answer_index: number; // Índice (0-based) de la opción correcta en la lista 'options'
-  explanation?: string; // Explicación opcional
+// Actualiza tu QuestionTypeLiteral o como lo tengas definido
+export type QuestionTypeLiteral = "V_F" | "MC" | "OPEN" | "FITB"; // <--- AÑADIDO "FITB"
+
+export interface TrueFalseQuestion extends BaseQuestion {
+  type: "V_F";
+  correct_answer: boolean;
 }
 
-// Interfaz para Preguntas Abiertas
-export interface OpenQuestion {
-  id: string;
-  text: string; // El texto de la pregunta
-  type: "OPEN"; // Tipo de pregunta
-  // Las preguntas abiertas no tienen una 'correct_answer' predefinida de la misma manera
-  // Podrían tener una 'sample_answer' o 'grading_rubric' en el futuro
-  explanation?: string; // Explicación opcional o guía de respuesta para el docente
+export interface MultipleChoiceQuestion extends BaseQuestion {
+  type: "MC";
+  options: string[];
+  correct_answer_index: number;
 }
 
+export interface OpenQuestion extends BaseQuestion {
+  type: "OPEN";
+  // 'explanation' en BaseQuestion puede servir como guía de respuesta
+}
 
-// Tipo unión para representar cualquier tipo de pregunta en el frontend
-export type Question = TrueFalseQuestion | MultipleChoiceQuestion | OpenQuestion; // Añadido OpenQuestion
+// --- NUEVO TIPO DE PREGUNTA PARA COMPLETAR ---
+export interface FillInTheBlankQuestion extends BaseQuestion {
+  type: "FITB";
+  // 'text' contendrá los placeholders, ej: "La capital de __BLANK__ es __BLANK__."
+  answers: string[]; // Lista de respuestas correctas en orden
+}
 
-// Configuración para la cantidad de preguntas por tipo
+// Actualiza tu tipo unión Question
+export type Question = TrueFalseQuestion | MultipleChoiceQuestion | OpenQuestion | FillInTheBlankQuestion; // <--- AÑADIDO FillInTheBlankQuestion
+
+// Actualiza tu QuestionConfig
 export interface QuestionConfig {
-  vf_questions: number; // Número de preguntas Verdadero/Falso
-  mc_questions: number; // Número de preguntas Opción Múltiple
-  open_questions: number; // Número de preguntas Abiertas
+  vf_questions: number;
+  mc_questions: number;
+  open_questions: number;
+  fitb_questions?: number; // <--- AÑADIDO como opcional, o requerido si siempre se envía
 }
 
-// Datos para la solicitud de generación de examen desde el frontend al backend
-export interface ExamGenerationRequestData {
-  pdf_id: string; // ID del PDF base para el examen
-  title: string; // Título del examen
-  question_config: QuestionConfig; // Configuración de tipos y cantidad de preguntas
-  difficulty: "facil" | "medio" | "dificil"; // Nivel de dificultad
-  language: string; // Idioma para las preguntas (ej. "es", "en")
-  model_id?: string; // Modelo de IA a utilizar (opcional, el backend tiene un default)
-}
+// Para la solicitud al backend (puede ser diferente a QuestionConfig si es necesario)
+// En CreateExamScreen.tsx ya definimos BackendExamGenerationRequest['question_config']
+// como Dict[str, int], lo cual es flexible.
 
-// Datos del examen generado que el backend devuelve al frontend
+// Para la respuesta del backend
 export interface GeneratedExamData {
-  pdf_id: string; // ID del PDF base del examen
-  title: string; // Título del examen
-  difficulty: "facil" | "medio" | "dificil"; // Dificultad del examen
-  questions: Question[]; // Lista de preguntas generadas (ahora puede incluir OpenQuestion)
-  error?: string; // Campo para mensajes de error si la generación falla parcial o totalmente
+  pdf_id: string;
+  title: string;
+  difficulty: "facil" | "medio" | "dificil";
+  questions: Question[]; // Ya debería manejar el nuevo tipo por la unión
+  error?: string;
+  config_used?: { // Para reflejar QuestionConfigForExam del backend
+    num_true_false?: number;
+    num_multiple_choice?: number;
+    num_open_questions?: number;
+    num_fill_in_the_blank?: number; // <--- AÑADIDO
+    difficulty?: "facil" | "medio" | "dificil";
+    language?: string;
+    model_id?: string;
+    user_id?: string;
+  };
 }
 
-// (Opcional) Interfaz para guardar un examen en Firestore desde el frontend
+// Para guardar en Firestore
 export interface ExamForFirestore {
-  userId: string; // ID del usuario que crea el examen
-  pdfId: string; // ID del PDF asociado
-  title: string; // Título del examen
-  difficulty: "facil" | "medio" | "dificil"; // Dificultad
-  config: QuestionConfig; // Configuración de preguntas utilizada (ya incluye open_questions)
-  questions: Question[]; // Las preguntas generadas (tal como se muestran en el frontend)
-  createdAt: any; // Timestamp de Firestore para la fecha de creación
-  language?: string; // Idioma del examen (opcional)
-  model_id_used?: string; // Modelo de IA utilizado (opcional)
+  userId: string;
+  pdfId: string;
+  title: string;
+  difficulty: "facil" | "medio" | "dificil";
+  config: QuestionConfig; // QuestionConfig ahora incluye fitb_questions
+  questions: Question[]; // Ya debería manejar el nuevo tipo
+  createdAt: FieldValue | Timestamp; // Asegúrate que FieldValue y Timestamp estén importados
+  language: string;
+  model_id_used?: string;
+}
+
+// Otros tipos que puedas tener...
+export interface ExamGenerationRequestData {
+    pdf_id: string;
+    title: string;
+    question_config: QuestionConfig; // Asegúrate que este tipo se alinee con lo que envías
+    difficulty: 'facil' | 'medio' | 'dificil';
+    language: string;
+    model_id?: string;
+    user_id: string; // Importante
 }
