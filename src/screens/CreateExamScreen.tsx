@@ -10,22 +10,19 @@ import {
     ExamGenerationRequestData,
     GeneratedExamData,
     Question as QuestionType,
-    TrueFalseQuestion, // Este tipo es parte de QuestionType, por lo que es usado.
+    // TrueFalseQuestion, // No es necesario importar si solo se usa como parte de QuestionType
     MultipleChoiceQuestion,
     ExamForFirestore
 } from '../types/examTypes';
-// Iconos no utilizados eliminados: Edit3, Languages, BrainCircuit
 import { ArrowLeft, Settings, FileText, Loader2, AlertTriangle, Info, CheckCircle2, Trash2, Download, Save, Send, ListChecks, ChevronDown, ChevronUp } from 'lucide-react';
 import { collection, addDoc, serverTimestamp } from 'firebase/firestore';
 
-// Lista de modelos de IA disponibles para la generación de exámenes
 const AVAILABLE_EXAM_MODELS = [
     { id: "gemini-1.5-flash-latest", displayName: "Gemini 1.5 Flash (Rápido y Eficiente)" },
     { id: "gemini-1.5-pro-latest", displayName: "Gemini 1.5 Pro (Más Potente)" },
 ];
 const DEFAULT_EXAM_MODEL_ID = AVAILABLE_EXAM_MODELS[0].id;
 
-// URL del backend (ajusta para producción)
 const FASTAPI_BACKEND_URL = process.env.NODE_ENV === 'development'
     ? "http://localhost:8000"
     : "TU_URL_DE_BACKEND_FASTAPI_DESPLEGADO"; 
@@ -101,7 +98,11 @@ const CreateExamScreen: React.FC = () => {
 
     useEffect(() => {
         if (generatedExam?.questions) {
-            setEditedQuestions([...generatedExam.questions]);
+            // Asegurarse de que questions sea un array antes de hacer spread
+            setEditedQuestions(Array.isArray(generatedExam.questions) ? [...generatedExam.questions] : []);
+        } else if (generatedExam && !generatedExam.questions) {
+            // Si generatedExam existe pero no tiene questions (ej. si hubo un error en el backend que igual devolvió el objeto base)
+            setEditedQuestions([]);
         }
     }, [generatedExam]);
 
@@ -159,7 +160,7 @@ const CreateExamScreen: React.FC = () => {
                  setGeneratedExam(data); 
             } else if (!data.questions || data.questions.length === 0) {
                 setGenerationError("El modelo no generó ninguna pregunta con la configuración actual. Intenta ajustar los parámetros o el contenido del PDF.");
-                setGeneratedExam(data); 
+                setGeneratedExam(data); // data podría tener un array vacío de questions
             } else {
                 setGeneratedExam(data);
             }
@@ -386,10 +387,10 @@ const CreateExamScreen: React.FC = () => {
                                             <div className="font-semibold text-slate-200 flex-grow flex items-start">
                                                 <span className="mr-2 pt-1">{index + 1}.</span>
                                                 <textarea 
-                                                    value={q.text}
+                                                    value={q.text || ''} // Fallback a string vacío
                                                     onChange={(e) => handleQuestionTextChange(q.id, e.target.value)}
                                                     className="p-1 bg-slate-600/50 border border-slate-500 rounded-md w-full focus:ring-1 focus:ring-sky-400 resize-none text-sm"
-                                                    rows={q.text.length > 80 ? 3 : 2} // Ajustar altura dinámicamente
+                                                    rows={(q.text || '').length > 80 ? 3 : 2} // Usar (q.text || '').length
                                                 />
                                             </div>
                                             <button onClick={() => handleDeleteQuestion(q.id)} title="Eliminar Pregunta"
@@ -407,7 +408,7 @@ const CreateExamScreen: React.FC = () => {
                                         )}
                                         {q.type === 'MC' && (
                                             <ul className="list-none pl-6 space-y-1 text-sm">
-                                                {(q as MultipleChoiceQuestion).options.map((opt, i) => (
+                                                {((q as MultipleChoiceQuestion).options || []).map((opt, i) => ( // Fallback a array vacío
                                                     <li key={i} className={`flex items-center
                                                         ${i === (q as MultipleChoiceQuestion).correct_answer_index ? 'text-green-400 font-semibold' : 'text-slate-300'}
                                                     `}>

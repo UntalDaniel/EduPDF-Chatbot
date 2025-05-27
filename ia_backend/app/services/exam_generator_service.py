@@ -3,8 +3,8 @@ import logging
 import uuid
 import json
 import httpx # Para llamadas HTTP a Gemini API
-import os # <--- IMPORTACIÓN AÑADIDA
-from typing import List, Dict, Optional, Union, Literal # <--- Literal AÑADIDO
+import os
+from typing import List, Dict, Optional, Union, Literal
 
 from pydantic import ValidationError
 
@@ -18,7 +18,6 @@ from app.models.schemas import (
     LLMGeneratedQuestions,    # Estructura que esperamos del LLM
     LLMGeneratedTrueFalse,
     LLMGeneratedMultipleChoice
-    # Asegúrate que LLMGeneratedFillBlank esté aquí si lo vas a usar pronto
 )
 # Configuración y servicios
 from app.core.config import settings
@@ -38,10 +37,7 @@ async def get_pdf_content_for_exam_generation(pdf_id: str, sample_text_from_pdf:
         logger.info(f"ExamGen: Using provided sample_text_from_pdf for pdf_id: {pdf_id}")
         return sample_text_from_pdf
 
-    # Prioridad 1: Archivo de texto completo (mejora sugerida en el informe)
-    # Asegúrate que FAISS_INDEXES_DIR en config.py apunte a donde guardarías estos txt.
-    # Puede ser el mismo directorio donde antes guardabas FAISS o uno nuevo para "processed_data".
-    processed_data_dir = getattr(settings, "PROCESSED_DATA_DIR", settings.FAISS_INDEXES_DIR) # Usar un nombre más genérico si es posible
+    processed_data_dir = settings.PROCESSED_DATA_DIR
     txt_file_path = os.path.join(processed_data_dir, f"{pdf_id}_full_text.txt")
     
     if os.path.exists(txt_file_path):
@@ -51,42 +47,39 @@ async def get_pdf_content_for_exam_generation(pdf_id: str, sample_text_from_pdf:
                 full_text = f.read()
             if full_text.strip():
                 logger.info(f"ExamGen: Loaded full text from file, length: {len(full_text)}.")
-                # Limitar el tamaño del texto si es muy grande, incluso desde el archivo
-                max_text_for_llm_from_file = getattr(settings, "EXAM_GEN_MAX_TEXT_FROM_FILE", 50000) # Configurable
+                max_text_for_llm_from_file = settings.EXAM_GEN_MAX_TEXT_FROM_FILE
                 if len(full_text) > max_text_for_llm_from_file:
                     logger.warning(f"ExamGen: Full text from file for PDF {pdf_id} is too long ({len(full_text)} chars), truncating to {max_text_for_llm_from_file} chars.")
                     return full_text[:max_text_for_llm_from_file]
                 return full_text
         except Exception as e:
             logger.error(f"ExamGen: Error reading full text file {txt_file_path}: {e}")
-            # Continuar para intentar desde Pinecone
 
     logger.info(f"ExamGen: Full text file not found or empty for {pdf_id}. Attempting to retrieve from Pinecone.")
+    
     vector_store = get_vector_store_for_pdf_retrieval(pdf_id) 
 
     if not vector_store:
-        logger.warning(f"ExamGen: Vector store not found for PDF ID: {pdf_id}. Cannot retrieve text.")
-        # Devolver un texto por defecto o lanzar un error más específico si es preferible
-        return ( # Texto por defecto muy genérico
+        logger.warning(f"ExamGen: Vector store not found for PDF ID: {pdf_id} via rag_chain. Cannot retrieve text.")
+        return (
             "No se pudo acceder al contenido del PDF para generar el examen. "
             "Por favor, asegúrese de que el documento haya sido procesado correctamente. "
             "Intente de nuevo o contacte al soporte si el problema persiste."
         )
 
     try:
-        num_chunks_to_retrieve = getattr(settings, "EXAM_GEN_NUM_CHUNKS_RETRIEVAL", 15) 
+        num_chunks_to_retrieve = settings.EXAM_GEN_NUM_CHUNKS_RETRIEVAL
         logger.info(f"ExamGen: Performing similarity search to get up to {num_chunks_to_retrieve} sample chunks for PDF: {pdf_id}")
         
-        retriever = vector_store.as_retriever(search_kwargs={"k": num_chunks_to_retrieve}) 
-        # Usar una consulta más neutral para obtener una variedad de chunks
+        retriever = vector_store.as_retriever(search_kwargs={"k": num_chunks_to_retrieve})
         sample_docs = await retriever.aget_relevant_documents("conceptos e información detallada del documento") 
 
         if sample_docs:
             retrieved_texts = [doc.page_content for doc in sample_docs]
-            concatenated_text = "\n\n---\n\n".join(retrieved_texts) 
+            concatenated_text = "\n\n---\n\n".join(retrieved_texts)
             logger.info(f"ExamGen: Retrieved {len(sample_docs)} chunks from Pinecone for PDF ID: {pdf_id}. Total length: {len(concatenated_text)}")
             
-            max_text_for_llm_from_pinecone = getattr(settings, "EXAM_GEN_MAX_TEXT_FROM_PINECONE", 30000) 
+            max_text_for_llm_from_pinecone = settings.EXAM_GEN_MAX_TEXT_FROM_PINECONE
             if len(concatenated_text) > max_text_for_llm_from_pinecone:
                 logger.warning(f"ExamGen: Concatenated text from Pinecone for PDF {pdf_id} is too long ({len(concatenated_text)} chars), truncating to {max_text_for_llm_from_pinecone} chars.")
                 return concatenated_text[:max_text_for_llm_from_pinecone]
@@ -104,54 +97,18 @@ async def generate_questions_via_gemini_api(
     text_content: str,
     num_vf: int,
     num_mc: int,
-    difficulty: Literal["facil", "medio", "dificil"], # <--- Literal USADO AQUÍ
+    difficulty: Literal["facil", "medio", "dificil"],
     language: str,
-    model_id_exam_gen: str # Modelo específico para generación de exámenes
+    model_id_exam_gen: str
 ) -> Optional[LLMGeneratedQuestions]:
+    # CORRECCIÓN: Usar settings.GEMINI_API_KEY_BACKEND
     if not settings.GEMINI_API_KEY_BACKEND:
-        logger.error("ExamGen LLM: GEMINI_API_KEY_BACKEND is not set.")
-        return None
+        logger.error("ExamGen LLM: GEMINI_API_KEY_BACKEND is not set in settings.")
+        # Devolver None o lanzar una excepción más específica podría ser mejor aquí
+        # para que generate_exam_questions_service pueda dar un error más claro al usuario.
+        raise ValueError("La clave API de Gemini para el backend no está configurada.")
 
-    response_schema_properties = {}
-    # Solo añadir al schema si se piden preguntas de ese tipo
-    if num_vf > 0:
-        response_schema_properties["true_false_questions"] = {
-            "type": "ARRAY", 
-            "description": f"Una lista de exactamente {num_vf} preguntas de verdadero o falso.",
-            # Usar model_json_schema para obtener la estructura de LLMGeneratedTrueFalse
-            "items": LLMGeneratedTrueFalse.model_json_schema(ref_template="#/components/schemas/{model}") 
-            # ^-- Esto podría ser demasiado complejo para el schema de Gemini.
-            # Es más simple definir las propiedades directamente.
-            # "items": {
-            #     "type": "OBJECT",
-            #     "properties": {
-            #         "question_text": {"type": "STRING", "description": "El texto de la pregunta V/F."},
-            #         "answer": {"type": "BOOLEAN", "description": "Respuesta correcta (true/false)."},
-            #         "explanation": {"type": "STRING", "description": "Breve explicación."}
-            #     },
-            #     "required": ["question_text", "answer"]
-            # }
-        }
-    if num_mc > 0:
-        response_schema_properties["multiple_choice_questions"] = {
-            "type": "ARRAY", 
-            "description": f"Una lista de exactamente {num_mc} preguntas de opción múltiple.",
-            # "items": LLMGeneratedMultipleChoice.model_json_schema(ref_template="#/components/schemas/{model}")
-            # ^-- Simplificando:
-            # "items": {
-            #     "type": "OBJECT",
-            #     "properties": {
-            #         "question_text": {"type": "STRING", "description": "Texto de la pregunta OM."},
-            #         "options": {"type": "ARRAY", "items": {"type": "STRING"}, "description": "Lista de 4 opciones."},
-            #         "correct_option_text": {"type": "STRING", "description": "Texto de la opción correcta."},
-            #         "explanation": {"type": "STRING", "description": "Breve explicación."}
-            #     },
-            #     "required": ["question_text", "options", "correct_option_text"]
-            # }
-        }
-    
-    # Simplificación del schema para Gemini API, ya que el anidamiento profundo con model_json_schema() puede no ser ideal.
-    # Se define la estructura esperada directamente.
+
     simplified_response_schema = {"type": "OBJECT", "properties": {}}
     if num_vf > 0:
         simplified_response_schema["properties"]["true_false_questions"] = {
@@ -177,10 +134,9 @@ async def generate_questions_via_gemini_api(
             }
         }
 
-
     if not simplified_response_schema["properties"]:
         logger.info("ExamGen LLM: No questions requested (num_vf=0, num_mc=0). Skipping LLM call.")
-        return LLMGeneratedQuestions() 
+        return LLMGeneratedQuestions(true_false_questions=[], multiple_choice_questions=[])
 
     prompt_parts = [
         f"Eres un asistente experto en crear preguntas de examen en idioma '{language}' con un nivel de dificultad '{difficulty}'. Basándote ESTRICTAMENTE en el siguiente texto, genera preguntas de examen.",
@@ -196,7 +152,7 @@ async def generate_questions_via_gemini_api(
         "Para las preguntas de opción múltiple, la 'correct_option_text' DEBE ser una de las cadenas en la lista 'options'.",
         "Proporciona una breve 'explanation' (opcional pero recomendada) para cada pregunta.",
         "\nTexto de referencia para basar las preguntas:\n------\n",
-        text_content, # Ya truncado si es necesario por get_pdf_content_for_exam_generation
+        text_content,
         "\n------\n",
         "Responde ÚNICAMENTE con un objeto JSON que se adhiera al esquema proporcionado. No incluyas ningún otro texto, explicación, markdown o prefijo fuera del JSON."
     ])
@@ -207,18 +163,18 @@ async def generate_questions_via_gemini_api(
         "generationConfig": {
             "responseMimeType": "application/json",
             "responseSchema": simplified_response_schema, 
-            "temperature": getattr(settings, "EXAM_GEN_LLM_TEMPERATURE", 0.4), 
+            "temperature": settings.EXAM_GEN_LLM_TEMPERATURE,
         }
     }
     
-    effective_model_id = model_id_exam_gen # Usar el modelo pasado como argumento
+    effective_model_id = model_id_exam_gen
+    # CORRECCIÓN: Usar settings.GEMINI_API_KEY_BACKEND
     api_url = f"https://generativelanguage.googleapis.com/v1beta/models/{effective_model_id}:generateContent?key={settings.GEMINI_API_KEY_BACKEND}"
 
     logger.debug(f"ExamGen LLM: Enviando payload a Gemini ({effective_model_id}). Prompt (primeros 200 chars): {prompt[:200]}...")
-    # logger.debug(f"ExamGen LLM: Response schema: {json.dumps(simplified_response_schema, indent=2)}")
-
-    async with httpx.AsyncClient(timeout=getattr(settings, "EXAM_GEN_LLM_TIMEOUT_SECONDS", 180.0)) as client:
-        try: # <--- INICIO DEL BLOQUE TRY CON ERRORES DE SINTAXIS
+    
+    async with httpx.AsyncClient(timeout=settings.EXAM_GEN_LLM_TIMEOUT_SECONDS) as client:
+        try:
             response = await client.post(api_url, json=payload)
             response.raise_for_status() 
             response_json = response.json()
@@ -238,123 +194,122 @@ async def generate_questions_via_gemini_api(
                 generated_mc_count = len(llm_questions.multiple_choice_questions) if llm_questions.multiple_choice_questions else 0
                 
                 log_msg_counts = f"LLM generó: V/F={generated_vf_count} (pedidas={num_vf}), OM={generated_mc_count} (pedidas={num_mc})."
-                if (num_vf > 0 and generated_vf_count < num_vf) or \
-                   (num_mc > 0 and generated_mc_count < num_mc) : # Si no generó la cantidad esperada
-                    logger.warning(f"ExamGen LLM: No se generó la cantidad esperada de preguntas. {log_msg_counts} Respuesta LLM: {json_text}")
+                if (num_vf > 0 and generated_vf_count == 0 and num_mc == 0) or \
+                   (num_mc > 0 and generated_mc_count == 0 and num_vf == 0) or \
+                   (num_vf > 0 and num_mc > 0 and generated_vf_count == 0 and generated_mc_count == 0) or \
+                   (num_vf > 0 and generated_vf_count < num_vf) or \
+                   (num_mc > 0 and generated_mc_count < num_mc) :
+                    logger.warning(f"ExamGen LLM: No se generó la cantidad esperada o ninguna pregunta. {log_msg_counts} Respuesta LLM: {json_text}")
                 else:
                     logger.info(f"ExamGen LLM: Preguntas generadas exitosamente. {log_msg_counts}")
                 return llm_questions
             else: 
                 prompt_feedback = response_json.get("promptFeedback")
+                block_reason_msg = "Razón desconocida o no especificada por la API."
                 if prompt_feedback and prompt_feedback.get("blockReason"):
                     block_reason = prompt_feedback["blockReason"]
-                    block_message = prompt_feedback.get("blockReasonMessage", "Razón de bloqueo desconocida.")
-                    logger.error(f"ExamGen LLM: Solicitud bloqueada por Gemini. Razón: {block_reason}. Mensaje: {block_message}")
-                    return None 
-                logger.error(f"ExamGen LLM: Estructura de respuesta inesperada de Gemini API. Respuesta: {response_json}")
-                return None
-        except httpx.HTTPStatusError as e: # <--- BLOQUE EXCEPT AÑADIDO
+                    block_message_detail = prompt_feedback.get("blockReasonMessage", "")
+                    block_reason_msg = f"Razón: {block_reason}. Mensaje: {block_message_detail if block_message_detail else 'No disponible.'}"
+                logger.error(f"ExamGen LLM: Solicitud bloqueada o estructura de respuesta inesperada. {block_reason_msg} Respuesta completa: {response_json}")
+                return None # Indicar fallo
+        except httpx.HTTPStatusError as e:
             logger.error(f"ExamGen LLM: HTTP error: {e.response.status_code} - {e.response.text}", exc_info=True)
-            return None
+            # Propagar un error más específico si es posible
+            raise Exception(f"Error de la API de Gemini ({e.response.status_code}): {e.response.text}") from e
         except (json.JSONDecodeError, ValidationError) as e: 
             raw_text_response = "No disponible (error antes de obtener texto)"
-            # Corrección para el bloque try anidado que causaba error de sintaxis
-            try: 
-              if 'response_json' in locals() and response_json.get("candidates") and \
-                 response_json["candidates"][0].get("content") and \
-                 response_json["candidates"][0]["content"].get("parts") and \
-                 response_json["candidates"][0]["content"]["parts"][0].get("text"):
-                  raw_text_response = response_json["candidates"][0]["content"]["parts"][0]["text"]
-            except NameError: # response_json podría no estar definida si el error es antes
-                 pass 
-            except Exception: # Captura genérica para el acceso anidado
-                 pass
+            if 'response' in locals() and hasattr(response, 'text'): # type: ignore
+                raw_text_response = response.text # type: ignore
             logger.error(f"ExamGen LLM: Fallo al parsear/validar JSON de respuesta LLM: {e}. Texto crudo: {raw_text_response}", exc_info=True)
-            return None
+            raise Exception("Error al procesar la respuesta del modelo de IA.") from e
         except Exception as e:
             logger.error(f"ExamGen LLM: Error inesperado durante llamada a Gemini: {e}", exc_info=True)
-            return None
+            raise Exception(f"Error inesperado contactando el servicio de IA: {str(e)}") from e
 
 
-async def generate_exam_questions_service(request: ExamGenerationRequest) -> Optional[GeneratedExam]:
+async def generate_exam_questions_service(request: ExamGenerationRequest) -> GeneratedExam:
     logger.info(f"ExamGen Service: Iniciando generación de examen para PDF ID: {request.pdf_id}, Título: '{request.title}'")
     
-    pdf_text_content = await get_pdf_content_for_exam_generation(request.pdf_id, request.sample_text_from_pdf if hasattr(request, 'sample_text_from_pdf') else None)
-    
-    min_text_length = getattr(settings, "EXAM_GEN_MIN_TEXT_LENGTH", 200) 
-    if not pdf_text_content or len(pdf_text_content) < min_text_length : 
-        logger.warning(f"ExamGen Service: Contenido del PDF para {request.pdf_id} es muy corto (longitud: {len(pdf_text_content or '')}) o no disponible.")
-        return GeneratedExam(
-            pdf_id=request.pdf_id,
-            title=request.title,
+    error_message_for_user = None
+    try:
+        pdf_text_content = await get_pdf_content_for_exam_generation(
+            request.pdf_id, 
+            getattr(request, 'sample_text_from_pdf', None)
+        )
+        
+        min_text_length = settings.EXAM_GEN_MIN_TEXT_LENGTH
+        if not pdf_text_content or len(pdf_text_content) < min_text_length :
+            logger.warning(f"ExamGen Service: Contenido del PDF para {request.pdf_id} es muy corto (longitud: {len(pdf_text_content or '')}) o no disponible.")
+            error_message_for_user = (
+                f"El contenido del documento recuperado es demasiado corto (longitud: {len(pdf_text_content or '')} caracteres) "
+                f"para generar un examen de calidad. Se requieren al menos {min_text_length} caracteres."
+            )
+            return GeneratedExam(
+                pdf_id=request.pdf_id, title=request.title, difficulty=request.difficulty,
+                questions=[], error=error_message_for_user
+            )
+
+        llm_generated_data = await generate_questions_via_gemini_api(
+            text_content=pdf_text_content,
+            num_vf=request.question_config.vf_questions,
+            num_mc=request.question_config.mc_questions,
             difficulty=request.difficulty,
-            questions=[],
-            error=f"El contenido del documento recuperado es demasiado corto (longitud: {len(pdf_text_content or '')} caracteres) para generar un examen de calidad. Se requieren al menos {min_text_length} caracteres."
+            language=request.language,
+            model_id_exam_gen=request.model_id or settings.DEFAULT_GEMINI_MODEL_EXAM_GEN
         )
 
-    llm_generated_data = await generate_questions_via_gemini_api(
-        text_content=pdf_text_content,
-        num_vf=request.question_config.vf_questions,
-        num_mc=request.question_config.mc_questions,
-        difficulty=request.difficulty,
-        language=request.language, # Añadido el idioma
-        model_id_exam_gen=request.model_id or getattr(settings, "DEFAULT_GEMINI_MODEL_EXAM_GEN", "gemini-1.5-flash-latest")
-    )
+        if not llm_generated_data:
+            logger.error(f"ExamGen Service: No se recibieron datos estructurados del LLM para el examen '{request.title}'.")
+            error_message_for_user = "El modelo de IA no pudo generar las preguntas del examen. Inténtalo de nuevo o con diferentes configuraciones."
+            return GeneratedExam(
+                pdf_id=request.pdf_id, title=request.title, difficulty=request.difficulty,
+                questions=[], error=error_message_for_user
+            )
 
-    if not llm_generated_data:
-        logger.error(f"ExamGen Service: No se recibieron datos estructurados del LLM para el examen '{request.title}'.")
-        return GeneratedExam(
-            pdf_id=request.pdf_id,
-            title=request.title,
-            difficulty=request.difficulty,
-            questions=[],
-            error="El modelo de IA no pudo generar las preguntas del examen. Inténtalo de nuevo o con diferentes configuraciones."
-        )
-
-    all_questions: List[Question] = [] 
-    
-    if llm_generated_data.true_false_questions:
-        for q_data in llm_generated_data.true_false_questions:
-            try:
-                # Usar question_text y answer directamente del LLMGeneratedTrueFalse
-                all_questions.append(TrueFalseQuestion(id=str(uuid.uuid4()), question_text=q_data.question_text, correct_answer=q_data.answer, explanation=q_data.explanation))
-            except ValidationError as ve:
-                logger.warning(f"ExamGen Service: Error de validación al crear TrueFalseQuestion: {ve}. Datos: {q_data.model_dump_json()}")
-
-    if llm_generated_data.multiple_choice_questions:
-        for q_data in llm_generated_data.multiple_choice_questions:
-            try:
-                if not q_data.options or len(q_data.options) < 2: 
-                    logger.warning(f"ExamGen Service: Pregunta OM '{q_data.question_text}' tiene opciones insuficientes. Se omite.")
-                    continue
-                
-                correct_idx = -1
+        all_questions: List[Question] = []
+        
+        if llm_generated_data.true_false_questions:
+            for q_data in llm_generated_data.true_false_questions:
                 try:
-                    correct_idx = q_data.options.index(q_data.correct_option_text)
-                except ValueError: # correct_option_text no está en options
-                    logger.warning(f"ExamGen Service: Respuesta correcta '{q_data.correct_option_text}' no encontrada en opciones {q_data.options} para pregunta: '{q_data.question_text}'. Se omite.")
-                    continue
-                
-                all_questions.append(MultipleChoiceQuestion(id=str(uuid.uuid4()), question_text=q_data.question_text, options=q_data.options, correct_answer_index=correct_idx, explanation=q_data.explanation))
-            except ValidationError as ve:
-                 logger.warning(f"ExamGen Service: Error de validación al crear MultipleChoiceQuestion: {ve}. Datos: {q_data.model_dump_json()}")
+                    all_questions.append(TrueFalseQuestion(id=str(uuid.uuid4()), question_text=q_data.question_text, correct_answer=q_data.answer, explanation=q_data.explanation))
+                except ValidationError as ve:
+                    logger.warning(f"ExamGen Service: Error de validación al crear TrueFalseQuestion: {ve}. Datos: {q_data.model_dump_json(exclude_none=True)}")
 
+        if llm_generated_data.multiple_choice_questions:
+            for q_data in llm_generated_data.multiple_choice_questions:
+                try:
+                    if not q_data.options or len(q_data.options) < 2: 
+                        logger.warning(f"ExamGen Service: Pregunta OM '{q_data.question_text}' tiene opciones insuficientes. Se omite.")
+                        continue
+                    
+                    correct_idx = -1
+                    try:
+                        normalized_options = [opt.strip().lower() for opt in q_data.options]
+                        normalized_correct_option_text = q_data.correct_option_text.strip().lower()
+                        correct_idx = normalized_options.index(normalized_correct_option_text)
+                    except ValueError:
+                        logger.warning(f"ExamGen Service: Respuesta correcta '{q_data.correct_option_text}' no encontrada en opciones {q_data.options} para pregunta: '{q_data.question_text}'. Se omite.")
+                        continue
+                    
+                    all_questions.append(MultipleChoiceQuestion(id=str(uuid.uuid4()), question_text=q_data.question_text, options=q_data.options, correct_answer_index=correct_idx, explanation=q_data.explanation))
+                except ValidationError as ve:
+                     logger.warning(f"ExamGen Service: Error de validación al crear MultipleChoiceQuestion: {ve}. Datos: {q_data.model_dump_json(exclude_none=True)}")
 
-    if not all_questions and (request.question_config.vf_questions > 0 or request.question_config.mc_questions > 0):
-        logger.warning(f"ExamGen Service: No se generaron preguntas válidas para el examen '{request.title}' a pesar de ser solicitadas y de que el LLM pudo haber respondido.")
+        if not all_questions and (request.question_config.vf_questions > 0 or request.question_config.mc_questions > 0):
+            logger.warning(f"ExamGen Service: No se generaron preguntas válidas para el examen '{request.title}' a pesar de ser solicitadas y de que el LLM pudo haber respondido.")
+            error_message_for_user = "El modelo de IA generó una respuesta, pero no se pudieron validar o parsear preguntas válidas. Revisa los logs del backend para más detalles."
+            # No necesariamente un error si el LLM no devuelve nada y no hubo excepción.
+            # El frontend mostrará "no hay preguntas".
+        
         return GeneratedExam(
-            pdf_id=request.pdf_id,
-            title=request.title,
-            difficulty=request.difficulty,
-            questions=[],
-            error="El modelo de IA generó una respuesta, pero no se pudieron validar o parsear preguntas válidas. Revisa los logs del backend."
+            pdf_id=request.pdf_id, title=request.title, difficulty=request.difficulty,
+            questions=all_questions, error=error_message_for_user # error será None si todo fue bien
         )
 
-    generated_exam_response = GeneratedExam(
-        pdf_id=request.pdf_id,
-        title=request.title,
-        difficulty=request.difficulty,
-        questions=all_questions
-    )
-    logger.info(f"ExamGen Service: Examen '{request.title}' generado con {len(all_questions)} preguntas válidas.")
-    return generated_exam_response
+    except Exception as e: # Captura errores de get_pdf_content o generate_questions_via_gemini_api
+        logger.error(f"ExamGen Service: Error inesperado generando examen '{request.title}': {e}", exc_info=True)
+        return GeneratedExam(
+            pdf_id=request.pdf_id, title=request.title, difficulty=request.difficulty,
+            questions=[], error=f"Ocurrió un error interno inesperado al generar el examen: {str(e)}"
+        )
+

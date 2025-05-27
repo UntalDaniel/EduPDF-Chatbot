@@ -4,16 +4,15 @@ pydantic>=2.0.0
 python-dotenv>=1.0.0
 google-generativeai
 langchain-google-genai
-langchain>=0.1.0 
-langchain-community>=0.0.1 
-pinecone>=4.0.0 
-pyreadline3>=3.4.1
+langchain>=0.1.0
+langchain-community>=0.0.1
+langchain-pinecone # <--- ASEGÚRATE QUE ESTA LÍNEA ESTÉ PRESENTE
+pinecone-client>=4.0.0 # Nombre correcto del paquete para Pinecone v3+
+pyreadline3>=3.4.1 # Solo para Windows, opcional en otros SO
 firebase-admin>=6.0.0
 httpx>=0.24.0
-PyPDF2>=3.0.0
-PyMuPDF
-faiss-cpu
+PyMuPDF # Para 'import fitz'
+# faiss-cpu # Descomenta si lo estás usando activamente para otra cosa
 numpy
-python-multipart 
-langchain-openai>=0.1.0 
-
+python-multipart
+langchain-openai>=0.1.0 # Si lo usas para alguna funcionalidad específica de OpenAI.
