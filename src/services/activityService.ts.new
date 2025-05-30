@@ -1,0 +1,99 @@
+import { ActivityType, ActivityTypeActivity, CrosswordData, WordSearchData, WordConnectionData } from '../types/activityTypes';
+import { generateWordSearch, generateCrossword, generateWordConnection } from './aiService';
+import { createActivity as createFirestoreActivity } from '../firebase/activityService';
+import React from 'react';
+
+// Error class for activity-related errors
+class ActivityError extends Error {
+  constructor(
+    message: string,
+    public code: string,
+    public details?: Record<string, any>
+  ) {
+    super(message);
+    this.name = 'ActivityError';
+  }
+}
+
+// Function to generate a PDF of the activity
+export const generatePrintableActivity = async (activity: ActivityTypeActivity): Promise<Blob> => {
+  try {
+    // Validate essential data for PDF generation
+    const validationErrors: string[] = [];
+    
+    // Basic validations
+    if (!activity.type) {
+      validationErrors.push('Activity type is required');
+    }
+    
+    if (!activity.title || activity.title.trim() === '') {
+      validationErrors.push('Title is required');
+    } else if (activity.title.length > 100) {
+      validationErrors.push('Title cannot be longer than 100 characters');
+    }
+    
+    // Type-specific validations
+    if (activity.type && activity.data) {
+      switch (activity.type) {
+        case ActivityType.WORD_SEARCH: {
+          const wsData = activity.data as WordSearchData;
+          if (!wsData.grid || !Array.isArray(wsData.grid) || wsData.grid.length === 0) {
+            validationErrors.push('Invalid word search data');
+          }
+          if (!wsData.words || !Array.isArray(wsData.words) || wsData.words.length === 0) {
+            validationErrors.push('Word search must contain words');
+          }
+          break;
+        }
+          
+        case ActivityType.CROSSWORD: {
+          const cwData = activity.data as CrosswordData;
+          if (!cwData.grid || !Array.isArray(cwData.grid) || cwData.grid.length === 0) {
+            validationErrors.push('Invalid crossword data');
+          }
+          if (!cwData.clues || !Array.isArray(cwData.clues) || cwData.clues.length === 0) {
+            validationErrors.push('Crossword must contain clues');
+          }
+          break;
+        }
+          
+        case ActivityType.WORD_CONNECTION: {
+          const wcData = activity.data as WordConnectionData;
+          if (!wcData.connections || !Array.isArray(wcData.connections) || wcData.connections.length === 0) {
+            validationErrors.push('Must have at least one word connection');
+          }
+          break;
+        }
+      }
+    }
+    
+    if (validationErrors.length > 0) {
+      console.error('Validation errors:', validationErrors);
+      throw new ActivityError('Invalid activity data', 'INVALID_ACTIVITY_DATA', { validationErrors });
+    }
+
+    // Dynamically import required modules
+    const { pdf } = await import('@react-pdf/renderer');
+    const { ActivityPDF } = await import('../components/activities/PrintableView');
+    
+    // Create a temporary PDF document component
+    const PdfDocument = () => (
+      <Document>
+        <Page>
+          <ActivityPDF activity={activity} />
+        </Page>
+      </Document>
+    );
+    
+    // Generate PDF using the component
+    const pdfBlob = await pdf(React.createElement(PdfDocument)).toBlob();
+    
+    return pdfBlob;
+  } catch (error) {
+    console.error('Error generating PDF:', error);
+    throw new ActivityError('Error generating PDF', 'PDF_GENERATION_ERROR', { cause: error });
+  }
+};
+
+// Export other necessary functions
+export { generateWordSearch, generateCrossword, generateWordConnection, createFirestoreActivity };

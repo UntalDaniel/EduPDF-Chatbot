@@ -1,0 +1,132 @@
+import React from 'react';
+import { 
+  ActivityTypeActivity, 
+  ActivityType, 
+  WordSearchActivity, 
+  CrosswordActivity, 
+  WordConnectionActivity,
+  WordSearchData,
+  CrosswordData,
+  WordConnectionData
+} from '../../types/activityTypes';
+import { WordSearch } from './WordSearch';
+import { Crossword } from './Crossword';
+import { WordConnection } from './WordConnection';
+
+interface ActivityViewProps {
+  activity: WordSearchActivity | CrosswordActivity | WordConnectionActivity;
+}
+
+export const ActivityView: React.FC<ActivityViewProps> = ({ activity }) => {
+  // Función para normalizar los datos de la actividad
+  const normalizeActivityData = (activity: any) => {
+    // Si la actividad ya tiene la estructura esperada, la devolvemos tal cual
+    if (activity.data) {
+      return activity.data;
+    }
+    
+    // Si no tiene .data, asumimos que las propiedades están en el objeto raíz
+    // Esto es para compatibilidad con el formato antiguo
+    const { id, type, title, description, pdfId, createdAt, updatedAt, userId, ...data } = activity;
+    return data;
+  };
+
+  const renderActivity = () => {
+    try {
+      // Usar una función de tipo guard para verificar el tipo de actividad
+      const isWordSearch = (act: any): act is WordSearchActivity => 
+        act.type === ActivityType.WORD_SEARCH;
+      const isCrossword = (act: any): act is CrosswordActivity => 
+        act.type === ActivityType.CROSSWORD;
+      const isWordConnection = (act: any): act is WordConnectionActivity => 
+        act.type === ActivityType.WORD_CONNECTION;
+
+      const activityData = normalizeActivityData(activity);
+      console.log('Datos de la actividad normalizados:', activityData);
+
+      if (isWordSearch(activity)) {
+        // Verificar si la actividad tiene la estructura esperada para WordSearch
+        const wordSearchData = activityData as WordSearchData;
+        const hasRequiredFields = 
+          wordSearchData.words && 
+          Array.isArray(wordSearchData.words) && 
+          wordSearchData.words.length > 0 &&
+          wordSearchData.grid && 
+          Array.isArray(wordSearchData.grid) && 
+          wordSearchData.grid.length > 0;
+          
+        if (!hasRequiredFields) {
+          console.error('Estructura de datos incorrecta para WordSearch:', wordSearchData);
+          return (
+            <div className="text-center text-red-500 p-4">
+              Error: La estructura de datos de la sopa de letras es incorrecta.
+            </div>
+          );
+        }
+        
+        return <WordSearch data={wordSearchData} />;
+      } else if (isCrossword(activity)) {
+        return <Crossword data={activityData as CrosswordData} />;
+      } else if (isWordConnection(activity)) {
+        return <WordConnection data={activityData as WordConnectionData} />;
+      }
+
+      // Si llegamos aquí, el tipo de actividad no es compatible
+      return (
+        <div className="text-center text-red-500 p-4">
+          Error: Tipo de actividad no compatible.
+        </div>
+      );
+    } catch (error) {
+      console.error('Error al renderizar la actividad:', error);
+      return (
+        <div className="text-center text-red-500 p-4">
+          Ocurrió un error al cargar la actividad. Por favor, inténtalo de nuevo.
+        </div>
+      );
+    }
+  };
+
+  return (
+    <div className="w-full space-y-6">
+      <div className="bg-white rounded-lg shadow overflow-hidden">
+        <div className="p-6">
+          <div className="mb-6">
+            <div className="flex justify-between items-start">
+              <div>
+                <h2 className="text-2xl font-bold text-gray-900">{activity.title}</h2>
+                {activity.description && (
+                  <p className="text-gray-600 mt-1">{activity.description}</p>
+                )}
+              </div>
+            </div>
+          </div>
+          
+          <div className="space-y-6">
+            <div className="bg-gray-50 p-6 rounded-lg border border-gray-200">
+              {renderActivity()}
+            </div>
+
+            {activity.type === ActivityType.WORD_SEARCH && (activity.data as WordSearchData)?.words && (
+              <div className="bg-blue-50 p-4 rounded-lg border border-blue-100">
+                <h3 className="font-medium text-blue-800 mb-3">Palabras a encontrar:</h3>
+                <div className="flex flex-wrap gap-2">
+                  {(activity.data as WordSearchData).words.map((word: string, index: number) => (
+                    <span 
+                      key={index}
+                      className="px-3 py-1 bg-white text-blue-800 text-sm font-medium rounded-full border border-blue-200"
+                    >
+                      {word}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default ActivityView;

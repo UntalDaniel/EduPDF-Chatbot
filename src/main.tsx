@@ -1,6 +1,10 @@
 // src/main.tsx
-import { StrictMode } from 'react'; // React se elimina si no se usa explícitamente
+import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { BrowserRouter } from 'react-router-dom';
+import { AuthProvider } from '@/contexts/AuthContext';
+import { ThemeProvider } from '@/components/theme-provider';
+import { Toaster } from '@/components/ui/toaster';
 import App from './App';
 import './index.css'; // Asegúrate que este archivo exista y contenga las directivas de Tailwind
 
@@ -8,7 +12,19 @@ const rootElement = document.getElementById('root');
 if (rootElement) {
   createRoot(rootElement).render(
     <StrictMode>
-      <App />
+      <BrowserRouter>
+        <ThemeProvider 
+          defaultTheme="system" 
+          enableSystem
+          disableTransitionOnChange
+          attribute="class"
+        >
+          <AuthProvider>
+            <App />
+            <Toaster />
+          </AuthProvider>
+        </ThemeProvider>
+      </BrowserRouter>
     </StrictMode>
   );
 } else {

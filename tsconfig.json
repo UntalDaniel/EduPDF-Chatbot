@@ -5,32 +5,22 @@
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
     "module": "ESNext",
     "skipLibCheck": true,
-
-    /* Bundler mode */
-    "moduleResolution": "bundler", // O "node" si "bundler" causa problemas con algunas bibliotecas más antiguas
-    "allowImportingTsExtensions": true,
+    "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "jsx": "react-jsx", // Correcto para React 17+
-
-    /* Linting */
+    "jsx": "react-jsx",
     "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
     "noFallthroughCasesInSwitch": true,
-    // "verbatimModuleSyntax": true, // Puedes descomentar si lo necesitas específicamente
-
-    /* Path Aliases */
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"]
     },
-    "esModuleInterop": true, // Ayuda con la interoperabilidad de módulos CommonJS y ES
-    "forceConsistentCasingInFileNames": true // Buena práctica
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true
   },
-  // Asegúrate de que 'vite-env.d.ts' esté en la raíz del proyecto o ajusta la ruta.
-  // Si vite-env.d.ts está en src/, usa "src/vite-env.d.ts".
-  "include": ["src", "./vite-env.d.ts", "postcss.config.js", "tailwind.config.js", "vite.config.ts"],
-  "references": [{ "path": "./tsconfig.node.json" }]
+  "include": ["src"],
+  "exclude": ["node_modules", "dist", "**/*.test.ts", "**/*.test.tsx"]
 }

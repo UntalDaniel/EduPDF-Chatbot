@@ -11,6 +11,8 @@ import {
   GoogleAuthProvider,
   signInWithPopup,
   signOut as firebaseSignOut,
+  sendPasswordResetEmail,
+  sendEmailVerification,
 } from 'firebase/auth';
 import { FirebaseError } from 'firebase/app';
 import { updateUserProfile } from '../firebase/firestoreService';
@@ -25,6 +27,9 @@ const AuthScreen: React.FC = () => {
     const [currentUser, setCurrentUser] = useState<FirebaseUserType | null>(null);
     const [showPwd, setShowPwd] = useState(false);
     const [initialAuthAttempted, setInitialAuthAttempted] = useState(false);
+    const [isResetPassword, setIsResetPassword] = useState(false);
+    const [resetEmailSent, setResetEmailSent] = useState(false);
+    const [verificationEmailSent, setVerificationEmailSent] = useState(false);
 
     useEffect(() => {
         const auth = firebaseAuthInstance;
@@ -157,6 +162,48 @@ const AuthScreen: React.FC = () => {
         }
     };
 
+    const handlePasswordReset = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!email) {
+            setError('Por favor, ingresa tu correo electrónico');
+            return;
+        }
+        setLoading(true);
+        setError(null);
+        try {
+            await sendPasswordResetEmail(firebaseAuthInstance, email);
+            setResetEmailSent(true);
+        } catch (err) {
+            console.error('Error al enviar email de recuperación:', err);
+            if (err instanceof FirebaseError) {
+                setError(`Error (${err.code}): ${err.message}`);
+            } else {
+                setError('Error al enviar el email de recuperación');
+            }
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const handleEmailVerification = async () => {
+        if (!currentUser) return;
+        setLoading(true);
+        setError(null);
+        try {
+            await sendEmailVerification(currentUser);
+            setVerificationEmailSent(true);
+        } catch (err) {
+            console.error('Error al enviar email de verificación:', err);
+            if (err instanceof FirebaseError) {
+                setError(`Error (${err.code}): ${err.message}`);
+            } else {
+                setError('Error al enviar el email de verificación');
+            }
+        } finally {
+            setLoading(false);
+        }
+    };
+
     if (loading && !initialAuthAttempted) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800 p-4">
@@ -199,13 +246,65 @@ const AuthScreen: React.FC = () => {
         );
     }
 
+    if (resetEmailSent) {
+        return (
+            <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800 p-4">
+                <div className="bg-slate-700 p-8 rounded-xl shadow-2xl w-full max-w-md text-white text-center">
+                    <CheckCircle className="mx-auto text-green-400 h-16 w-16 mb-4" />
+                    <h2 className="text-2xl font-bold text-sky-300 mb-4">Email Enviado</h2>
+                    <p className="text-slate-300 mb-6">
+                        Se ha enviado un email a {email} con instrucciones para recuperar tu contraseña.
+                    </p>
+                    <button
+                        onClick={() => {
+                            setIsResetPassword(false);
+                            setResetEmailSent(false);
+                            setError(null);
+                        }}
+                        className="w-full bg-sky-500 hover:bg-sky-600 text-white font-semibold py-3 rounded-lg transition-colors"
+                    >
+                        Volver al inicio de sesión
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
+    if (verificationEmailSent) {
+        return (
+            <div className="min-h-screen flex flex-col items-center justify-center bg-gradient-to-br from-slate-900 to-slate-800 p-4">
+                <div className="bg-slate-700 p-8 rounded-xl shadow-2xl w-full max-w-md text-white text-center">
+                    <CheckCircle className="mx-auto text-green-400 h-16 w-16 mb-4" />
+                    <h2 className="text-2xl font-bold text-sky-300 mb-4">Email de Verificación Enviado</h2>
+                    <p className="text-slate-300 mb-6">
+                        Se ha enviado un email de verificación a tu correo electrónico.
+                        Por favor, verifica tu cuenta para acceder a todas las funcionalidades.
+                    </p>
+                    <button
+                        onClick={() => setVerificationEmailSent(false)}
+                        className="w-full bg-sky-500 hover:bg-sky-600 text-white font-semibold py-3 rounded-lg transition-colors"
+                    >
+                        Entendido
+                    </button>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 flex flex-col justify-center items-center p-4 font-sans">
             <div className="bg-slate-700 p-8 rounded-xl shadow-2xl w-full max-w-md text-white">
                 <div className="text-center mb-8">
                     <BookOpen className="mx-auto text-sky-400 h-16 w-16 mb-2" />
                     <h1 className="text-4xl font-bold text-sky-400">EduPDF</h1>
-                    <p className="text-slate-300">{isLogin ? 'Inicia Sesión' : 'Crea tu Cuenta'}</p>
+                    <p className="text-slate-300">
+                        {isResetPassword 
+                            ? 'Recuperar Contraseña'
+                            : isLogin 
+                                ? 'Inicia Sesión' 
+                                : 'Crea tu Cuenta'
+                        }
+                    </p>
                     {canvasAppId && <p className="text-xs text-slate-400 mt-1">App ID: {canvasAppId}</p>}
                 </div>
 
@@ -216,38 +315,85 @@ const AuthScreen: React.FC = () => {
                     </div>
                 )}
 
-                <form onSubmit={(e) => handleAuthAction(e, 'email')} className="space-y-6">
-                    <div>
-                        <label htmlFor="email-authscreen" className="block text-sm font-medium text-slate-300 mb-1">
-                            Correo Electrónico
-                        </label>
-                        <div className="relative">
-                            <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-slate-400" />
-                            <input id="email-authscreen" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required
-                                className="w-full pl-10 pr-3 py-2.5 bg-slate-800 border border-slate-600 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 outline-none transition-colors"
-                                placeholder="tu@email.com" />
+                {isResetPassword ? (
+                    <form onSubmit={handlePasswordReset}>
+                        <div>
+                            <label htmlFor="email-authscreen" className="block text-sm font-medium text-slate-300 mb-1">
+                                Correo Electrónico
+                            </label>
+                            <div className="relative">
+                                <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-slate-400" />
+                                <input
+                                    id="email-authscreen"
+                                    type="email"
+                                    value={email}
+                                    onChange={(e) => setEmail(e.target.value)}
+                                    required
+                                    className="w-full pl-10 pr-3 py-2.5 bg-slate-800 border border-slate-600 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 outline-none transition-colors"
+                                    placeholder="tu@email.com"
+                                />
+                            </div>
                         </div>
-                    </div>
-                    <div>
-                        <label htmlFor="password-authscreen" className="block text-sm font-medium text-slate-300 mb-1">
-                            Contraseña
-                        </label>
-                        <div className="relative">
-                            <KeyRound className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-slate-400" />
-                            <input id="password-authscreen" type={showPwd ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} required
-                                className="w-full pl-10 pr-10 py-2.5 bg-slate-800 border border-slate-600 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 outline-none transition-colors"
-                                placeholder="••••••••" />
-                            <button type="button" onClick={() => setShowPwd(!showPwd)} className="absolute right-3 top-1/2 transform -translate-y-1/2 text-slate-400 hover:text-sky-400">
-                                {showPwd ? <EyeOff size={20} /> : <Eye size={20} />}
+                        <button
+                            type="submit"
+                            disabled={loading}
+                            className="w-full mt-6 bg-sky-500 hover:bg-sky-600 text-white font-semibold py-3 rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center"
+                        >
+                            {loading ? (
+                                <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                            ) : null}
+                            Enviar Email de Recuperación
+                        </button>
+                        <div className="mt-6 text-center">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setIsResetPassword(false);
+                                    setError(null);
+                                }}
+                                className="text-sm text-sky-400 hover:text-sky-300 hover:underline"
+                            >
+                                Volver al inicio de sesión
                             </button>
                         </div>
-                    </div>
-                    <button type="submit" disabled={loading}
-                        className="w-full bg-sky-500 hover:bg-sky-600 text-white font-semibold py-3 rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center">
-                        {loading && <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25"></circle><path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" className="opacity-75"></path></svg>}
-                        {isLogin ? 'Iniciar Sesión' : 'Crear Cuenta'}
-                    </button>
-                </form>
+                    </form>
+                ) : (
+                    <form onSubmit={(e) => handleAuthAction(e, 'email')} className="space-y-6">
+                        <div>
+                            <label htmlFor="email-authscreen" className="block text-sm font-medium text-slate-300 mb-1">
+                                Correo Electrónico
+                            </label>
+                            <div className="relative">
+                                <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-slate-400" />
+                                <input id="email-authscreen" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required
+                                    className="w-full pl-10 pr-3 py-2.5 bg-slate-800 border border-slate-600 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 outline-none transition-colors"
+                                    placeholder="tu@email.com" />
+                            </div>
+                        </div>
+                        <div>
+                            <label htmlFor="password-authscreen" className="block text-sm font-medium text-slate-300 mb-1">
+                                Contraseña
+                            </label>
+                            <div className="relative">
+                                <KeyRound className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-slate-400" />
+                                <input id="password-authscreen" type={showPwd ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} required
+                                    className="w-full pl-10 pr-10 py-2.5 bg-slate-800 border border-slate-600 rounded-lg focus:ring-2 focus:ring-sky-500 focus:border-sky-500 outline-none transition-colors"
+                                    placeholder="••••••••" />
+                                <button type="button" onClick={() => setShowPwd(!showPwd)} className="absolute right-3 top-1/2 transform -translate-y-1/2 text-slate-400 hover:text-sky-400">
+                                    {showPwd ? <EyeOff size={20} /> : <Eye size={20} />}
+                                </button>
+                            </div>
+                        </div>
+                        <button type="submit" disabled={loading}
+                            className="w-full bg-sky-500 hover:bg-sky-600 text-white font-semibold py-3 rounded-lg transition-colors disabled:opacity-50 flex items-center justify-center">
+                            {loading && <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" className="opacity-25"></circle><path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" className="opacity-75"></path></svg>}
+                            {isLogin ? 'Iniciar Sesión' : 'Crear Cuenta'}
+                        </button>
+                    </form>
+                )}
 
                 <div className="mt-6 text-center">
                     <button onClick={() => { setIsLogin(!isLogin); setError(null); }}
@@ -261,6 +407,33 @@ const AuthScreen: React.FC = () => {
                     <svg className="w-5 h-5 mr-3" viewBox="0 0 48 48"><path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"></path><path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.53-4.19 7.19-10.44 7.19-17.65z"></path><path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"></path><path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"></path><path fill="none" d="M0 0h48v48H0z"></path></svg>
                     Continuar con Google
                 </button>
+
+                {!isResetPassword && (
+                    <div className="mt-6 text-center">
+                        <button
+                            onClick={() => {
+                                setIsResetPassword(true);
+                                setError(null);
+                            }}
+                            className="text-sm text-sky-400 hover:text-sky-300 hover:underline"
+                        >
+                            ¿Olvidaste tu contraseña?
+                        </button>
+                    </div>
+                )}
+
+                {currentUser && !currentUser.emailVerified && (
+                    <div className="mt-6 p-4 bg-yellow-500/20 text-yellow-300 border border-yellow-500 rounded-lg">
+                        <p className="mb-2">Tu correo electrónico no está verificado.</p>
+                        <button
+                            onClick={handleEmailVerification}
+                            disabled={loading}
+                            className="w-full bg-yellow-500 hover:bg-yellow-600 text-white font-semibold py-2 rounded-lg transition-colors"
+                        >
+                            Enviar email de verificación
+                        </button>
+                    </div>
+                )}
             </div>
             <footer className="text-center text-sm text-slate-500 mt-8">
                 &copy; {new Date().getFullYear()} EduPDF. Todos los derechos reservados.

@@ -73,15 +73,18 @@ export interface GeneratedExamData {
 
 // Para guardar en Firestore
 export interface ExamForFirestore {
-  userId: string;
-  pdfId: string;
+  id: string;
+  pdf_id: string;
   title: string;
-  difficulty: "facil" | "medio" | "dificil";
-  config: QuestionConfig; // QuestionConfig ahora incluye fitb_questions
-  questions: Question[]; // Ya debería manejar el nuevo tipo
-  createdAt: FieldValue | Timestamp; // Asegúrate que FieldValue y Timestamp estén importados
-  language: string;
-  model_id_used?: string;
+  difficulty: 'facil' | 'medio' | 'dificil';
+  questions: Question[];
+  created_at: Timestamp | FieldValue;
+  author_id: string;
+  is_assigned: boolean;
+  group_id: string | null;
+  share_link: string | null;
+  google_form_link: string | null;
+  is_google_form: boolean;
 }
 
 // Otros tipos que puedas tener...

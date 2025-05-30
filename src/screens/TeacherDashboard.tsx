@@ -3,16 +3,18 @@ import React, { useState, useEffect, ChangeEvent } from 'react';
 import { auth, canvasAppId, storage, db } from '../firebase/firebaseConfig';
 import type { User } from 'firebase/auth';
 import { onAuthStateChanged, signOut as firebaseSignOut } from 'firebase/auth';
-import { Navigate, useNavigate } from 'react-router-dom';
+import { Navigate, useNavigate, Link } from 'react-router-dom';
 import { 
     LogOut, UserCircle, BookOpen, UploadCloud, FileText, List, AlertCircle, 
-    CheckCircle2, Trash2, Edit3, PlusCircle, X, Loader2, Search, MessageCircle
+    CheckCircle2, Trash2, Edit3, PlusCircle, X, Loader2, Search, MessageCircle, Users, ListChecks
 } from 'lucide-react'; 
 import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from "firebase/storage";
 import { savePdfMetadata, getPdfsByTeacher, deletePdfMetadata as deletePdfFirestore } from '../firebase/firestoreService'; 
 import type { PdfMetadata } from '../firebase/firestoreService';
 // IMPORTACIONES CORREGIDAS: Añadido updateDoc y serverTimestamp
 import { Timestamp, doc, collection, updateDoc, serverTimestamp } from 'firebase/firestore'; 
+import Toast from '../components/Toast';
+import ModalSelectPdf from '../components/ModalSelectPdf';
 
 // Definición de la URL del backend (ajusta según sea necesario para producción)
 const FASTAPI_BACKEND_URL = process.env.NODE_ENV === 'development' 
@@ -26,6 +28,12 @@ interface ModalState {
     message: string;
     pdfId?: string;
     actionType?: 'createActivity' | 'createExam' | 'deleteConfirm' | 'info';
+}
+
+interface ToastState {
+    isVisible: boolean;
+    message: string;
+    type: 'error' | 'success' | 'info';
 }
 
 const TeacherDashboard: React.FC = () => {
@@ -47,6 +55,11 @@ const TeacherDashboard: React.FC = () => {
 
     const [modal, setModal] = useState<ModalState>({ isOpen: false, title: '', message: '' });
     const [deletingPdf, setDeletingPdf] = useState<boolean>(false);
+    const [toast, setToast] = useState<ToastState>({ isVisible: false, message: '', type: 'info' });
+
+    const [actionModalOpen, setActionModalOpen] = useState(false);
+    const [actionType, setActionType] = useState<'chat' | 'createActivity' | 'createExam' | null>(null);
+    const [showPdfModal, setShowPdfModal] = useState(false);
 
     useEffect(() => {
         if (!auth) {
@@ -258,20 +271,23 @@ const TeacherDashboard: React.FC = () => {
         return 'Fecha desconocida';
     };
 
-    const handleSelectPdf = (pdf: PdfMetadata) => {
-        setSelectedPdf(pdf.id === selectedPdf?.id ? null : pdf);
+    const handleSelectPdf = (pdfId: string) => {
+        setShowPdfModal(false);
+        if (actionType === 'chat') navigate(`/dashboard/chat/${pdfId}`);
+        if (actionType === 'createActivity') navigate(`/dashboard/activities/${pdfId}`);
+        if (actionType === 'createExam') navigate(`/dashboard/create-exam/${pdfId}`);
+        setActionType(null);
     };
     
-    const openActionModal = (pdf: PdfMetadata, action: 'createActivity' | 'createExam') => {
-        setSelectedPdf(pdf); 
-        const actionText = action === 'createActivity' ? 'Crear Actividad' : 'Crear Examen';
-        setModal({
-            isOpen: true,
-            title: `${actionText}: ${pdf.titulo || pdf.nombreArchivoOriginal}`,
-            message: `Estás a punto de iniciar la creación de una ${action === 'createActivity' ? 'actividad' : 'examen'} para este PDF. ¿Continuar?`,
-            pdfId: pdf.id,
-            actionType: action
-        });
+    const handleAction = (type: 'chat' | 'createActivity' | 'createExam') => {
+        if (!selectedPdf) {
+            setActionType(type);
+            setShowPdfModal(true);
+        } else {
+            if (type === 'chat') navigate(`/dashboard/chat/${selectedPdf.id}`);
+            if (type === 'createActivity') navigate(`/dashboard/activities/${selectedPdf.id}`);
+            if (type === 'createExam') navigate(`/dashboard/create-exam/${selectedPdf.id}`);
+        }
     };
 
     const openDeleteConfirmModal = (pdf: PdfMetadata) => {
@@ -289,57 +305,68 @@ const TeacherDashboard: React.FC = () => {
         if (!modal.pdfId || !modal.actionType || !user) return;
 
         if (modal.actionType === 'deleteConfirm') {
+            if (!storage || !db) {
+                setToast({
+                    isVisible: true,
+                    message: "Error: Servicio no disponible. Intenta más tarde.",
+                    type: 'error'
+                });
+                return;
+            }
+
             setDeletingPdf(true);
             try {
                 const pdfToDelete = userPdfs.find(p => p.id === modal.pdfId);
-                // CORRECCIÓN: Asegurar que pdfToDelete y su id existan antes de usarlos
-                if (!pdfToDelete || !pdfToDelete.id || !storage || !db) {
-                    throw new Error("PDF no encontrado, ID de PDF faltante, o servicio de Firebase no disponible.");
+                if (!pdfToDelete || !pdfToDelete.id) {
+                    throw new Error("PDF no encontrado o ID de PDF faltante");
                 }
-                
-                const backendDeleteResponse = await fetch(`${FASTAPI_BACKEND_URL}/pdfs/${pdfToDelete.id}/?user_id=${user.uid}`, {
+
+                const backendResponse = await fetch(`${FASTAPI_BACKEND_URL}/pdfs/${pdfToDelete.id}/?user_id=${user.uid}`, {
                     method: 'DELETE',
                 });
-                
-                if (!backendDeleteResponse.ok) {
-                    const errorData = await backendDeleteResponse.json().catch(() => ({detail: "Error desconocido del backend al eliminar datos vectoriales."}));
-                    console.warn(`Error del backend al eliminar datos de Pinecone para ${pdfToDelete.id}: ${errorData.detail}`);
-                } else {
-                    console.info(`Datos vectoriales para ${pdfToDelete.id} eliminados/solicitados para eliminación del backend.`);
+
+                if (!backendResponse.ok) {
+                    console.warn(`Backend deletion warning for PDF ${pdfToDelete.id}:`, await backendResponse.text());
                 }
 
-                const fileRef = ref(storage, pdfToDelete.nombreEnStorage); 
-                await deleteObject(fileRef);
-                console.info(`Archivo ${pdfToDelete.nombreEnStorage} eliminado de Firebase Storage.`);
+                const fileRef = ref(storage, pdfToDelete.nombreEnStorage);
+                try {
+                    await deleteObject(fileRef);
+                } catch (storageError: any) {
+                    if (storageError.code === 'storage/object-not-found') {
+                        setToast({
+                            isVisible: true,
+                            message: "El archivo ya fue eliminado anteriormente",
+                            type: 'info'
+                        });
+                    }
+                }
 
-                // Asumiendo que deletePdfFirestore (en firestoreService.ts) espera solo pdfId.
-                // Si necesita userId, la firma de deletePdfFirestore debe ser (pdfId: string, userId: string)
-                // y aquí llamarías: await deletePdfFirestore(pdfToDelete.id, user.uid);
-                await deletePdfFirestore(pdfToDelete.id); 
-                console.info(`Metadatos del PDF ${pdfToDelete.id} eliminados de Firestore.`);
-
+                await deletePdfFirestore(pdfToDelete.id);
                 setUserPdfs(prevPdfs => prevPdfs.filter(p => p.id !== modal.pdfId));
                 if (selectedPdf?.id === modal.pdfId) setSelectedPdf(null);
-                
-                closeModal(); 
-                setTimeout(() => { 
-                     setModal({ isOpen: true, title: "Éxito", message: `"${pdfToDelete.titulo || pdfToDelete.nombreArchivoOriginal}" eliminado correctamente.`, actionType: 'info' });
-                }, 100);
 
+                setToast({
+                    isVisible: true,
+                    message: `"${pdfToDelete.titulo || pdfToDelete.nombreArchivoOriginal}" eliminado correctamente`,
+                    type: 'success'
+                });
             } catch (error) {
                 console.error("Error al eliminar PDF:", error);
-                closeModal(); 
-                 setTimeout(() => {
-                    setModal({ isOpen: true, title: "Error de Eliminación", message: `No se pudo eliminar el PDF. ${error instanceof Error ? error.message : 'Error desconocido.'}`, actionType: 'info' });
-                }, 100);
+                setToast({
+                    isVisible: true,
+                    message: `Error al eliminar el PDF: ${error instanceof Error ? error.message : 'Error desconocido'}`,
+                    type: 'error'
+                });
             } finally {
                 setDeletingPdf(false);
+                closeModal();
             }
         } else if (modal.actionType === 'createActivity') {
-            navigate(`/dashboard/create-activity/${modal.pdfId}`); // modal.pdfId ya está verificado
-            closeModal(); 
+            navigate(`/dashboard/activities/${modal.pdfId}`);
+            closeModal();
         } else if (modal.actionType === 'createExam') {
-            navigate(`/dashboard/create-exam/${modal.pdfId}`); // modal.pdfId ya está verificado
+            navigate(`/dashboard/create-exam/${modal.pdfId}`);
             closeModal();
         }
     };
@@ -369,31 +396,6 @@ const TeacherDashboard: React.FC = () => {
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-gray-900 text-slate-100 p-4 sm:p-6 md:p-8 font-sans">
-            <header className="mb-8 md:mb-12">
-                <div className="container mx-auto flex flex-col sm:flex-row justify-between items-center py-4 gap-4 border-b border-slate-700">
-                    <div className="flex items-center">
-                        <BookOpen className="h-10 w-10 text-sky-500 mr-3" />
-                        <h1 className="text-3xl md:text-4xl font-bold tracking-tight text-sky-400">
-                            EduPDF <span className="text-slate-400 font-light">Panel</span>
-                        </h1>
-                    </div>
-                    <div className="flex items-center space-x-3 sm:space-x-4">
-                        <div className="flex items-center space-x-2 bg-slate-700/50 px-3 py-1.5 rounded-lg">
-                            <UserCircle className="h-6 w-6 text-slate-400" />
-                            <span className="text-sm text-slate-300 truncate max-w-[120px] sm:max-w-xs" title={user.displayName || user.email || 'Usuario'}>
-                                {user.displayName || user.email?.split('@')[0] || 'Usuario'}
-                            </span>
-                        </div>
-                        <button
-                            onClick={handleLogout}
-                            className="bg-red-600 hover:bg-red-700 text-white font-medium py-2 px-4 rounded-lg shadow-md hover:shadow-lg transition-all duration-300 ease-in-out transform hover:scale-105 flex items-center text-sm"
-                        >
-                           <LogOut size={16} className="mr-1.5"/> Salir
-                        </button>
-                    </div>
-                </div>
-            </header>
-
             <main className="container mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 md:gap-8">
                 <div className="lg:col-span-4 xl:col-span-3 space-y-6 md:space-y-8">
                     <div className="bg-slate-800/70 border border-slate-700/80 p-5 md:p-6 rounded-xl shadow-2xl">
@@ -444,22 +446,22 @@ const TeacherDashboard: React.FC = () => {
                         {!selectedPdf && <p className="text-sm text-slate-400 italic py-2">Selecciona un PDF de tu lista para habilitar estas acciones.</p>}
                          <div className="space-y-3 mt-2">
                             <button 
-                                onClick={() => selectedPdf && selectedPdf.id && navigate(`/dashboard/chat/${selectedPdf.id}`)}
-                                disabled={!selectedPdf || !selectedPdf.id || uploading || deletingPdf || processingBackend}
+                                onClick={() => handleAction('chat')}
+                                disabled={uploading || deletingPdf || processingBackend}
                                 className="w-full bg-teal-600 hover:bg-teal-700 text-white py-2.5 px-4 rounded-lg transition-all duration-150 font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center text-sm shadow-md hover:shadow-lg"
                             >
                                 <MessageCircle size={18} className="mr-2"/> Chatear con PDF
                             </button>
                             <button 
-                                onClick={() => selectedPdf && openActionModal(selectedPdf, 'createActivity')}
-                                disabled={!selectedPdf || uploading || deletingPdf || processingBackend}
+                                onClick={() => handleAction('createActivity')}
+                                disabled={uploading || deletingPdf || processingBackend}
                                 className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2.5 px-4 rounded-lg transition-all duration-150 font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center text-sm shadow-md hover:shadow-lg"
                             >
                                 <PlusCircle size={18} className="mr-2"/> Crear Actividad
                             </button>
                              <button 
-                                onClick={() => selectedPdf && openActionModal(selectedPdf, 'createExam')}
-                                disabled={!selectedPdf || uploading || deletingPdf || processingBackend}
+                                onClick={() => handleAction('createExam')}
+                                disabled={uploading || deletingPdf || processingBackend}
                                 className="w-full bg-amber-500 hover:bg-amber-600 text-white py-2.5 px-4 rounded-lg transition-all duration-150 font-medium disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center text-sm shadow-md hover:shadow-lg"
                             >
                                 <Edit3 size={18} className="mr-2"/> Crear Examen
@@ -504,9 +506,8 @@ const TeacherDashboard: React.FC = () => {
                             {filteredPdfs.map((pdf) => (
                                 <div 
                                     key={pdf.id} 
-                                    className={`bg-slate-700/60 p-3.5 rounded-lg shadow-md hover:shadow-xl transition-all duration-200 cursor-pointer border
-                                                ${selectedPdf?.id === pdf.id ? 'border-sky-500 ring-2 ring-sky-500 scale-[1.015]' : 'border-slate-600/70 hover:border-sky-600/70'}`}
-                                    onClick={() => handleSelectPdf(pdf)}
+                                    className={`bg-slate-700/60 p-3.5 rounded-lg shadow-md hover:shadow-xl transition-all duration-200 cursor-pointer border ${selectedPdf?.id === pdf.id ? 'border-sky-500 ring-2 ring-sky-500 scale-[1.015]' : 'border-slate-600/70 hover:border-sky-600/70'}`}
+                                    onClick={() => handleSelectPdf(pdf.id)}
                                 >
                                     <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
                                         <div className="flex items-start min-w-0 flex-grow">
@@ -520,32 +521,32 @@ const TeacherDashboard: React.FC = () => {
                                                 </p>
                                             </div>
                                         </div>
-                                        <div className="flex space-x-1.5 shrink-0 self-start sm:self-center pt-1 sm:pt-0">
-                                            <button 
-                                                onClick={(e) => { e.stopPropagation(); if(pdf.id) navigate(`/dashboard/chat/${pdf.id}`); }}
-                                                title="Chatear con este PDF"
-                                                className="p-2 text-xs bg-teal-600 hover:bg-teal-700 text-white rounded-md disabled:opacity-50 transition-colors"
-                                                disabled={uploading || deletingPdf || processingBackend || !pdf.id}
+                                        <div className="flex gap-2 flex-wrap mt-2 sm:mt-0">
+                                            <button
+                                                onClick={e => { e.stopPropagation(); navigate(`/dashboard/activities/${pdf.id}`); }}
+                                                className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-md text-xs font-medium shadow transition-colors"
+                                                title="Ver o crear actividades para este PDF"
                                             >
-                                                <MessageCircle size={16}/>
+                                                <svg xmlns='http://www.w3.org/2000/svg' className='h-4 w-4 mr-1' fill='none' viewBox='0 0 24 24' stroke='currentColor'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M9 17v-2a2 2 0 012-2h2a2 2 0 012 2v2m-6 4h6a2 2 0 002-2v-6a2 2 0 00-2-2h-2a2 2 0 00-2 2v6a2 2 0 002 2z' /></svg>
+                                                Actividades
+                                            </button>
+                                            <button
+                                                onClick={e => { e.stopPropagation(); navigate(`/dashboard/tools/${pdf.id}`); }}
+                                                className="flex items-center gap-1 px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white rounded-md text-xs font-medium shadow transition-colors"
+                                                title="Herramientas inteligentes para este PDF"
+                                            >
+                                                <svg xmlns='http://www.w3.org/2000/svg' className='h-4 w-4 mr-1' fill='none' viewBox='0 0 24 24' stroke='currentColor'><path strokeLinecap='round' strokeLinejoin='round' strokeWidth={2} d='M15.232 5.232l3.536 3.536M9 11l6 6M7.5 7.5l9 9M2 12a10 10 0 1020 0 10 10 0 00-20 0z' /></svg>
+                                                Herramientas
                                             </button>
                                             <button 
-                                                onClick={(e) => { e.stopPropagation(); if(pdf.id) navigate(`/dashboard/create-exam/${pdf.id}`); }}
-                                                title="Crear Examen"
-                                                className="p-2 text-xs bg-amber-500 hover:bg-amber-600 text-white rounded-md disabled:opacity-50 transition-colors"
-                                                disabled={uploading || deletingPdf || processingBackend || !pdf.id}
-                                            >
-                                                <Edit3 size={16}/>
-                                            </button>
-                                            <button 
-                                                onClick={(e) => { e.stopPropagation(); window.open(pdf.urlDescargaStorage, '_blank');}}
+                                                onClick={e => { e.stopPropagation(); window.open(pdf.urlDescargaStorage, '_blank');}}
                                                 title="Ver PDF"
                                                 className="p-2 text-xs bg-sky-600 hover:bg-sky-700 text-white rounded-md transition-colors"
                                             >
                                                 <FileText size={16}/>
                                             </button>
                                             <button 
-                                                onClick={(e) => { e.stopPropagation(); openDeleteConfirmModal(pdf); }}
+                                                onClick={e => { e.stopPropagation(); openDeleteConfirmModal(pdf); }}
                                                 title="Eliminar PDF"
                                                 className="p-2 text-xs bg-red-600 hover:bg-red-700 text-white rounded-md disabled:opacity-50 transition-colors"
                                                 disabled={uploading || deletingPdf || processingBackend}
@@ -571,7 +572,7 @@ const TeacherDashboard: React.FC = () => {
             {modal.isOpen && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50" onClick={closeModal}>
                     <div className="bg-slate-800 border border-slate-700 p-6 rounded-xl shadow-2xl max-w-md w-full mx-auto animate-modalEnter"
-                         onClick={(e) => e.stopPropagation()} 
+                        onClick={(e) => e.stopPropagation()} 
                     >
                         <div className="flex justify-between items-center mb-4">
                             <h3 className="text-xl font-semibold text-sky-400">{modal.title}</h3>
@@ -601,23 +602,8 @@ const TeacherDashboard: React.FC = () => {
                                         {deletingPdf ? 'Eliminando...' : 'Sí, Eliminar'}
                                     </button>
                                 </>
-                            ) : modal.actionType === 'createActivity' || modal.actionType === 'createExam' ? (
-                                <>
-                                    <button
-                                        onClick={closeModal}
-                                        className="px-5 py-2 text-sm bg-slate-600 hover:bg-slate-500 text-slate-200 rounded-lg transition-colors"
-                                    >
-                                        Cancelar
-                                    </button>
-                                    <button
-                                        onClick={handleModalConfirm}
-                                        className="px-5 py-2 text-sm bg-sky-500 hover:bg-sky-600 text-white rounded-lg transition-colors flex items-center"
-                                    >
-                                       <CheckCircle2 size={16} className="mr-1.5"/> Confirmar
-                                    </button>
-                                </>
-                            ) : ( 
-                                 <button
+                            ) : (
+                                <button
                                     onClick={closeModal}
                                     className="px-5 py-2 text-sm bg-sky-500 hover:bg-sky-600 text-white rounded-lg transition-colors"
                                 >
@@ -629,16 +615,20 @@ const TeacherDashboard: React.FC = () => {
                 </div>
             )}
 
-            {canvasAppId && (
-                <div className="container mx-auto mt-10 p-3 bg-slate-800/50 border border-slate-700 rounded-lg text-center text-xs">
-                    <h4 className="font-semibold mb-1 text-slate-300">Información de Depuración:</h4>
-                    <p className="text-slate-400">User ID: <span className="font-mono">{user?.uid || "No disponible"}</span> | App ID (Canvas): <span className="font-mono">{canvasAppId}</span></p>
-                </div>
-            )}
-            <footer className="text-center py-8 mt-10 text-xs text-slate-500 border-t border-slate-700/50">
-                <p>&copy; {new Date().getFullYear()} EduPDF. Creado con fines educativos.</p>
-            </footer>
+            <ModalSelectPdf
+                open={showPdfModal}
+                onClose={() => setShowPdfModal(false)}
+                onSelect={handleSelectPdf}
+                pdfs={userPdfs}
+                title={
+                    actionType === 'chat' ? 'Selecciona un PDF para Chatear'
+                    : actionType === 'createActivity' ? 'Selecciona un PDF para Crear Actividad'
+                    : actionType === 'createExam' ? 'Selecciona un PDF para Crear Examen'
+                    : 'Selecciona un PDF'
+                }
+            />
         </div>
     );
 };
+
 export default TeacherDashboard;

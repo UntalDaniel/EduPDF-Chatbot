@@ -239,7 +239,10 @@ const ChatWithPdfScreen: React.FC = () => {
     }
     setChatError(null);
     const userMessage: Message = {
-      id: crypto.randomUUID(), text: trimmedInput, sender: 'user', timestamp: new Date(),
+      id: crypto.randomUUID(),
+      text: trimmedInput,
+      sender: 'user',
+      timestamp: new Date(),
     };
     
     const messagesForHistory = messages.filter(msg => {
@@ -252,7 +255,7 @@ const ChatWithPdfScreen: React.FC = () => {
           msg.text.toLowerCase().includes("se ha alcanzado el límite de solicitudes")
          )
         ) {
-          return false;
+        return false;
       }
       return true;
     });
@@ -276,7 +279,9 @@ const ChatWithPdfScreen: React.FC = () => {
       model_id: selectedChatModelId,
       chat_history: historyForBackend
     };
-    console.log("Enviando a FastAPI:", { routePdfId, bodyPayload });
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 30000);
 
     try {
       const apiUrl = `${FASTAPI_BACKEND_URL}/chat-rag/${encodeURIComponent(routePdfId)}/`;
@@ -284,7 +289,10 @@ const ChatWithPdfScreen: React.FC = () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(bodyPayload),
+        signal: controller.signal
       });
+
+      clearTimeout(timeoutId);
 
       const responseData = await response.json();
 
@@ -292,14 +300,14 @@ const ChatWithPdfScreen: React.FC = () => {
         const errorDetail = responseData?.detail || responseData?.error?.message || `Error del servidor: ${response.statusText} (${response.status})`;
         
         if (response.status === 429) {
-            const currentModelInfo = AVAILABLE_CHAT_MODELS_INFO.find(m => m.id === selectedChatModelId);
-            const modelNameForError = currentModelInfo?.displayName || selectedChatModelId;
-            finalBotText = `Se ha alcanzado el límite de solicitudes para el modelo "${modelNameForError}". Por favor, inténtalo de nuevo en un minuto o selecciona otro modelo.`;
-            setChatError(finalBotText); 
-            addBotMessageToHistory = false; 
+          const currentModelInfo = AVAILABLE_CHAT_MODELS_INFO.find(m => m.id === selectedChatModelId);
+          const modelNameForError = currentModelInfo?.displayName || selectedChatModelId;
+          finalBotText = `Se ha alcanzado el límite de solicitudes para el modelo "${modelNameForError}". Por favor, inténtalo de nuevo en un minuto o selecciona otro modelo.`;
+          setChatError(finalBotText); 
+          addBotMessageToHistory = false; 
         } else {
-            finalBotText = `Error del servidor: ${errorDetail}`;
-            setChatError(finalBotText);
+          finalBotText = `Error del servidor: ${errorDetail}`;
+          setChatError(finalBotText);
         }
       } else { 
         if (responseData.answer) {
@@ -310,15 +318,24 @@ const ChatWithPdfScreen: React.FC = () => {
           setChatError(finalBotText);
         }
       }
-    } catch (error: any) { 
+    } catch (error: any) {
+      clearTimeout(timeoutId);
       console.error("Error llamando a FastAPI /chat-rag/:", error);
-      finalBotText = `Error de conexión o al contactar al asistente RAG: ${error.message || "Error desconocido."}`;
+      if (error.name === 'AbortError') {
+        finalBotText = "La solicitud ha excedido el tiempo de espera. Por favor, inténtalo de nuevo.";
+      } else {
+        finalBotText = `Error de conexión o al contactar al asistente RAG: ${error.message || "Error desconocido."}`;
+      }
       setChatError(finalBotText);
       addBotMessageToHistory = false; 
     } finally {
       if(addBotMessageToHistory) {
         const botMessage: Message = {
-          id: crypto.randomUUID(), text: finalBotText, sender: 'bot', timestamp: new Date(), sources: botSources,
+          id: crypto.randomUUID(),
+          text: finalBotText,
+          sender: 'bot',
+          timestamp: new Date(),
+          sources: botSources,
         };
         setMessages(prevMessages => [...prevMessages, botMessage]);
       }

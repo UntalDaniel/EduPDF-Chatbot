@@ -15,6 +15,8 @@ import {
     ExamForFirestore
 } from '../types/examTypes'; 
 import { serverTimestamp } from 'firebase/firestore'; 
+import { doc, updateDoc } from 'firebase/firestore';
+import DashboardNavbar from '../components/DashboardNavbar';
 
 interface BackendExamGenerationRequest {
     pdf_id: string;
@@ -56,6 +58,7 @@ import {
 } from 'lucide-react'; // 'Type' icon removed
 import jsPDF from 'jspdf';
 import 'jspdf-autotable'; 
+import ShareExamMenu from '../components/ShareExamMenu';
 
 interface jsPDFWithAutoTable extends jsPDF {
   autoTable: (options: any) => jsPDF;
@@ -112,7 +115,10 @@ const CreateExamScreen: React.FC = () => {
     const [regeneratingQuestionId, setRegeneratingQuestionId] = useState<string | null>(null);
     const [editingOption, setEditingOption] = useState<{ questionId: string; optionIndex: number } | null>(null);
     const [editingFitbAnswer, setEditingFitbAnswer] = useState<{ questionId: string; answerIndex: number } | null>(null);
-
+    const [savedExamId, setSavedExamId] = useState<string | null>(null);
+    const [showShareMenu, setShowShareMenu] = useState(false);
+    const [showEmailModal, setShowEmailModal] = useState(false);
+    const [googleShareEmail, setGoogleShareEmail] = useState('');
 
     useEffect(() => {
         if (!firebaseAuthInstance) return;
@@ -194,83 +200,63 @@ const CreateExamScreen: React.FC = () => {
         if (!pdfId) { setGenerationError("ID de PDF no disponible."); return; }
         if (!currentUser) { setGenerationError("Debes iniciar sesión para generar un examen."); return; }
 
-        const numVF = parseInt(numVfQuestionsStr, 10) || 0;
-        const numMC = parseInt(numMcQuestionsStr, 10) || 0;
-        const numOpen = parseInt(numOpenQuestionsStr, 10) || 0;
-        const numFITB = parseInt(numFitbQuestionsStr, 10) || 0; 
-
-        if ((numVF + numMC + numOpen + numFITB) <= 0) { 
-            setGenerationError("Por favor, especifica al menos una pregunta para generar.");
-            return;
-        }
-        if (!examTitle.trim()) {
-            setGenerationError("Por favor, ingresa un título para el examen.");
-            return;
-        }
-
         setIsGenerating(true);
         setGenerationError(null);
-        setGeneratedExam(null);
-        setEditedQuestions([]);
-        setSaveSuccessMessage(null);
-        setSaveError(null);
-
-        const questionConfigPayload: BackendExamGenerationRequest['question_config'] = {
-            vf_questions: numVF,
-            mc_questions: numMC,
-            open_questions: numOpen,
-            fitb_questions: numFITB, 
-        };
-
-        const requestData: BackendExamGenerationRequest = {
-            pdf_id: pdfId,
-            title: examTitle,
-            question_config: questionConfigPayload,
-            difficulty: difficulty,
-            language: language,
-            model_id: selectedModelId,
-            user_id: currentUser.uid, 
-        };
-
-        console.log("Enviando para generar examen:", JSON.stringify(requestData, null, 2));
 
         try {
+            const requestBody: BackendExamGenerationRequest = {
+                pdf_id: pdfId,
+                title: examTitle,
+                question_config: {
+                    vf_questions: parseInt(numVfQuestionsStr) || 0,
+                    mc_questions: parseInt(numMcQuestionsStr) || 0,
+                    open_questions: parseInt(numOpenQuestionsStr) || 0,
+                    fitb_questions: parseInt(numFitbQuestionsStr) || 0
+                },
+                difficulty: difficulty,
+                language: language,
+                model_id: selectedModelId,
+                user_id: currentUser.uid
+            };
+
             const response = await fetch(`${FASTAPI_BACKEND_URL}/exams/generate-questions`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(requestData),
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(requestBody),
             });
-            
-            const responseBodyText = await response.text();
-            let data: FrontendGeneratedExamData; 
-            try {
-                data = JSON.parse(responseBodyText);
-            } catch (parseError) {
-                console.error("Error parseando JSON de respuesta:", responseBodyText);
-                throw new Error(`Respuesta inesperada del servidor (no JSON): ${response.status} ${response.statusText}. Contenido: ${responseBodyText.substring(0,100)}...`);
-            }
 
             if (!response.ok) {
-                const errorDetail = (data as any).error || (data as any).detail || `Error ${response.status} del servidor.`;
-                const errorMessage = Array.isArray(errorDetail) 
-                    ? errorDetail.map((err:any) => `${err.loc.join(' -> ')}: ${err.msg}`).join('; ')
-                    : String(errorDetail);
-                throw new Error(errorMessage);
+                throw new Error(`Error del servidor: ${response.status}`);
             }
-            
-            if (data.error) { 
-                 setGenerationError(data.error);
-                 setGeneratedExam(data); 
-            } else if (!data.questions || data.questions.length === 0) {
-                setGenerationError("El modelo no generó ninguna pregunta. Intenta ajustar parámetros o el PDF.");
-                setGeneratedExam(data); 
-            } else {
-                setGeneratedExam(data);
-                if (data.title) setPdfExamTitle(data.title); 
-            }
-        } catch (err: any) {
-            console.error("Error generando examen:", err);
-            setGenerationError(err.message || 'Ocurrió un error desconocido al generar el examen.');
+
+            const data = await response.json();
+            setGeneratedExam(data);
+
+            // Guardar automáticamente el examen
+            const examId = uuidv4();
+            const examForFirestore: ExamForFirestore = {
+                id: examId,
+                pdf_id: pdfId,
+                title: examTitle,
+                difficulty: difficulty,
+                questions: data.questions,
+                created_at: serverTimestamp(),
+                author_id: currentUser.uid,
+                is_assigned: false,
+                group_id: null,
+                share_link: null,
+                google_form_link: null
+            };
+
+            await saveExamToFirestore(examForFirestore);
+            setSavedExamId(examId);
+            setSaveSuccessMessage("Examen guardado automáticamente.");
+
+        } catch (error) {
+            console.error("Error generating exam:", error);
+            setGenerationError(error instanceof Error ? error.message : "Error al generar el examen.");
         } finally {
             setIsGenerating(false);
         }
@@ -306,20 +292,24 @@ const CreateExamScreen: React.FC = () => {
         }
         
         const examToSave: ExamForFirestore = {
-            userId: currentUser.uid,
-            pdfId: generatedExam.pdf_id, 
-            title: examTitle, 
+            id: uuidv4(),
+            pdf_id: generatedExam.pdf_id,
+            title: examTitle,
             difficulty: generatedExam.difficulty,
-            config: configForFirestore,
-            questions: editedQuestions, 
-            createdAt: serverTimestamp(), 
-            language: language, 
-            model_id_used: selectedModelId 
+            questions: editedQuestions,
+            created_at: serverTimestamp(),
+            author_id: currentUser.uid,
+            is_assigned: false,
+            group_id: null,
+            share_link: null,
+            google_form_link: null,
+            is_google_form: false
         };
 
         try {
-            const docId = await saveExamToFirestore(currentUser.uid, examToSave);
-            setSaveSuccessMessage(`Examen "${examToSave.title}" guardado con ID: ${docId}`);
+            await saveExamToFirestore(examToSave);
+            setSavedExamId(examToSave.id);
+            setSaveSuccessMessage(`Examen "${examToSave.title}" guardado correctamente.`);
         } catch (err: any) {
             console.error("Error guardando examen en Firestore:", err);
             setSaveError('Error al guardar el examen en Firestore: ' + err.message);
@@ -551,6 +541,60 @@ const CreateExamScreen: React.FC = () => {
         doc.save(`${(pdfExamTitle || examTitle || 'examen').replace(/[^a-z0-9]/gi, '_').toLowerCase()}.pdf`);
     };
 
+    const handleShareWithGroup = async () => {
+        if (!savedExamId) {
+            setSaveError("Primero debes guardar el examen.");
+            return;
+        }
+        navigate(`/dashboard/assign-exam/${savedExamId}`);
+    };
+
+    const handleShareAsGoogleForm = async () => {
+        if (!savedExamId) {
+            setSaveError("Primero debes guardar el examen.");
+            return;
+        }
+        setShowEmailModal(true);
+    };
+
+    const confirmShareAsGoogleForm = async () => {
+        setShowEmailModal(false);
+        try {
+            const response = await fetch(`${FASTAPI_BACKEND_URL}/api/v1/exam-generator/create-google-form`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    exam_id: savedExamId,
+                    user_id: currentUser?.uid,
+                    share_with_email: googleShareEmail
+                }),
+            });
+
+            if (!response.ok) {
+                throw new Error(`Error al crear Google Form: ${response.status}`);
+            }
+
+            const data = await response.json();
+            
+            // Actualizar el examen con el link de Google Form y marcarlo como Google Form
+            if (db && savedExamId) {
+                const examRef = doc(db, 'exams', savedExamId);
+                await updateDoc(examRef, {
+                    google_form_link: data.google_form_link,
+                    is_google_form: true
+                });
+            }
+
+            // Abrir el link en una nueva pestaña
+            window.open(data.google_form_link, '_blank');
+        } catch (error) {
+            console.error("Error creating Google Form:", error);
+            setSaveError(error instanceof Error ? error.message : "Error al crear Google Form.");
+        }
+    };
+
     if (loadingPdfDetails && !pdfDetails) { 
         return (
             <div className="min-h-screen flex flex-col items-center justify-center bg-slate-900 text-white p-4">
@@ -582,6 +626,7 @@ const CreateExamScreen: React.FC = () => {
     }
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-white p-4 md:p-8 font-sans">
+            <DashboardNavbar />
             <header className="mb-6 md:mb-8">
                  <div className="container mx-auto">
                     <Link to="/dashboard" className="inline-flex items-center text-sky-400 hover:text-sky-300 transition-colors group text-sm">
@@ -831,13 +876,6 @@ const CreateExamScreen: React.FC = () => {
                                                             </span>
                                                         )}
                                                         <button 
-                                                            onClick={() => setEditingFitbAnswer({ questionId: q.id, answerIndex: ansIndex })} 
-                                                            className="p-1 text-slate-400 hover:text-sky-300"
-                                                            title="Editar respuesta"
-                                                        >
-                                                            <Edit3 size={14} />
-                                                        </button>
-                                                        <button 
                                                             onClick={() => handleRemoveFitbAnswer(q.id, ansIndex)} 
                                                             title="Eliminar respuesta"
                                                             disabled={((q as FrontendFillInTheBlankQuestion).answers || []).length <= 1}
@@ -908,6 +946,54 @@ const CreateExamScreen: React.FC = () => {
                             <Info size={24} className="mx-auto mb-2"/>
                             <p>El modelo no generó preguntas con la configuración actual o el contenido del PDF.</p>
                             <p>Puedes intentar ajustar los parámetros o usar un PDF con más texto.</p>
+                        </div>
+                    )}
+
+                    {generatedExam && (
+                        <div className="mt-8 flex justify-end gap-4">
+                            <button
+                                onClick={handleDownloadPdf}
+                                className="flex items-center gap-2 px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors"
+                            >
+                                <Download className="w-5 h-5" />
+                                Descargar PDF
+                            </button>
+                            
+                            <button
+                                onClick={handleSaveExam}
+                                disabled={isSaving || !currentUser}
+                                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                            >
+                                {isSaving ? <Loader2 className="animate-spin w-5 h-5" /> : <Save className="w-5 h-5" />}
+                                {isSaving ? 'Guardando...' : 'Guardar Examen'}
+                            </button>
+
+                            <ShareExamMenu
+                                examId={savedExamId || ''}
+                                onShareWithGroup={handleShareWithGroup}
+                                onShareAsGoogleForm={handleShareAsGoogleForm}
+                                onClose={() => setShowShareMenu(false)}
+                            />
+                        </div>
+                    )}
+
+                    {showEmailModal && (
+                        <div className="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center z-50">
+                            <div className="bg-white rounded-lg p-6 w-full max-w-md shadow-xl">
+                                <h2 className="text-lg font-semibold mb-4 text-gray-800">Compartir Google Form</h2>
+                                <label className="block mb-2 text-gray-700">Correo de Google con el que deseas acceder al formulario:</label>
+                                <input
+                                    type="email"
+                                    value={googleShareEmail}
+                                    onChange={e => setGoogleShareEmail(e.target.value)}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-md mb-4"
+                                    placeholder="ejemplo@gmail.com"
+                                />
+                                <div className="flex justify-end gap-2">
+                                    <button onClick={() => setShowEmailModal(false)} className="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400">Cancelar</button>
+                                    <button onClick={confirmShareAsGoogleForm} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Compartir</button>
+                                </div>
+                            </div>
                         </div>
                     )}
 

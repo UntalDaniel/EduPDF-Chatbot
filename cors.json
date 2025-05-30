@@ -1,0 +1,9 @@
+[
+  {
+    "origin": ["http://localhost:5173", "https://chatbot-pdf-7076d.web.app", "https://chatbot-pdf-7076d.firebaseapp.com"],
+    "method": ["GET", "HEAD", "PUT", "POST", "DELETE", "OPTIONS"],
+    "maxAgeSeconds": 3600,
+    "responseHeader": ["Content-Type", "Authorization", "Content-Length", "User-Agent", "x-goog-meta-*"],
+    "exposeHeaders": ["Content-Length", "Date", "x-goog-meta-*"]
+  }
+]

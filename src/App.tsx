@@ -1,38 +1,59 @@
 // src/App.tsx
-import React, { useState, useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, Outlet, Link } from 'react-router-dom';
-import type { User } from 'firebase/auth';
-import { onAuthStateChanged, signInAnonymously, signInWithCustomToken } from 'firebase/auth';
-import { app as firebaseAppInstance, auth as firebaseAuthInstance } from './firebase/firebaseConfig';
+import React from 'react';
+import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { Loader2, AlertTriangle } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { Navbar } from '@/components/Navbar';
+import { auth as firebaseAuthInstance } from './firebase/firebaseConfig';
 
 // Importa tus componentes de pantalla
-import AuthScreen from './screens/AuthScreen';
+import LoginScreen from './screens/LoginScreen';
+import RegisterScreen from './screens/RegisterScreen';
 import TeacherDashboard from './screens/TeacherDashboard';
 import CreateActivityScreen from './screens/CreateActivityScreen';
 import ChatWithPdfScreen from './screens/ChatWithPdfScreen';
-import CreateExamScreen from './screens/CreateExamScreen'; // <--- IMPORTACIÓN NUEVA
+import CreateExamScreen from './screens/CreateExamScreen';
+import GroupsScreen from './screens/GroupsScreen';
+import GroupDetailScreen from './screens/GroupDetailScreen';
+import AssignExamToGroups from './screens/AssignExamToGroups';
+import AssignedExamsView from './screens/AssignedExamsView';
+import GradesDashboard from './screens/GradesDashboard';
+import MyFormsScreen from './screens/MyFormsScreen';
+import MySavedExamsScreen from './screens/MySavedExamsScreen';
+import FormDetailScreen from './screens/FormDetailScreen';
+import GroupExamDetailScreen from './screens/GroupExamDetailScreen';
+import StudentExamAttemptDetailScreen from './screens/StudentExamAttemptDetailScreen';
+import ToolsScreen from './screens/ToolsScreen';
+import ActivitiesScreen from './screens/ActivitiesScreen';
+import TakeExamScreen from './screens/TakeExamScreen';
+import NotFoundScreen from './screens/NotFoundScreen';
 
-import { AlertTriangle, Home, Loader2 } from 'lucide-react';
+// Componente de diseño principal que incluye la barra de navegación
+const MainLayout = () => {
+  return (
+    <div className="min-h-screen bg-slate-50 dark:bg-slate-900">
+      <Navbar />
+      <main className="container mx-auto p-4 pt-20">
+        <Outlet />
+      </main>
+    </div>
+  );
+};
 
-const ProtectedRoute: React.FC = () => {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
-  const auth = firebaseAuthInstance;
+// Componente para manejar la ruta de exámenes públicos
+const PublicExamRoute = () => {
+  return (
+    <Routes>
+      <Route path=":examId" element={<TakeExamScreen />} />
+    </Routes>
+  );
+};
 
-  useEffect(() => {
-    if (!auth) {
-        console.warn("ProtectedRoute: Auth service not available. Cannot determine auth state.");
-        setLoading(false); 
-        return;
-    }
-    const unsubscribe = onAuthStateChanged(auth, (currentUser: User | null) => { 
-      setUser(currentUser);
-      setLoading(false);
-    });
-    return () => unsubscribe(); 
-  }, [auth]);
+// Componente para rutas protegidas
+const ProtectedRoute = () => {
+  const { isAuthenticated, isLoading } = useAuth();
 
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white">
         <Loader2 className="animate-spin h-8 w-8 text-sky-400 mr-3" />
@@ -40,28 +61,15 @@ const ProtectedRoute: React.FC = () => {
       </div>
     );
   }
-  return user ? <Outlet /> : <Navigate to="/auth" replace />;
+  
+  return isAuthenticated ? <Outlet /> : <Navigate to="/login" replace />;
 };
 
-const PublicRoute: React.FC = () => {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
-  const auth = firebaseAuthInstance;
+// Componente para rutas públicas
+const PublicRoute = () => {
+  const { isAuthenticated, isLoading } = useAuth();
 
-  useEffect(() => {
-     if (!auth) {
-        console.warn("PublicRoute: Auth service not available. Cannot determine auth state.");
-        setLoading(false); 
-        return;
-    }
-    const unsubscribe = onAuthStateChanged(auth, (currentUser: User | null) => { 
-      setUser(currentUser);
-      setLoading(false);
-    });
-    return () => unsubscribe(); 
-  }, [auth]);
-
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white">
         <Loader2 className="animate-spin h-8 w-8 text-sky-400 mr-3" />
@@ -69,125 +77,51 @@ const PublicRoute: React.FC = () => {
       </div>
     );
   }
-  return user ? <Navigate to="/dashboard" replace /> : <Outlet />;
-};
-
-const NavigateBasedOnAuth: React.FC = () => {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [initialAuthAttempted, setInitialAuthAttempted] = useState(false);
-  const auth = firebaseAuthInstance;
-
-  useEffect(() => {
-    if (!auth) {
-        console.warn("NavigateBasedOnAuth: Auth service not available. Cannot perform initial auth.");
-        setLoading(false);
-        setInitialAuthAttempted(true); 
-        return;
-    }
-
-    const attemptInitialAuth = async () => {
-        if (auth.currentUser) {
-            console.log("NavigateBasedOnAuth: User already available on mount or from previous token sign-in.", auth.currentUser.uid);
-            setInitialAuthAttempted(true);
-            // No es necesario llamar a setLoading(false) aquí porque onAuthStateChanged lo hará.
-            return;
-        }
-
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-        
-        if (initialAuthToken) {
-            try {
-                console.log("NavigateBasedOnAuth: Attempting signInWithCustomToken...");
-                await signInWithCustomToken(auth, initialAuthToken);
-            } catch (error) {
-                console.error("NavigateBasedOnAuth: Error with signInWithCustomToken, trying anonymous:", error);
-                if (!auth.currentUser) { // Solo intentar anónimo si signInWithCustomToken falló Y no hay usuario
-                    try { await signInAnonymously(auth); } catch (e) { console.error("Anon sign-in failed after custom token error", e); }
-                }
-            }
-        } else { 
-            try {
-                console.log("NavigateBasedOnAuth: No custom token and no current user, attempting signInAnonymously...");
-                if (!auth.currentUser) { // Solo intentar anónimo si realmente no hay usuario
-                    await signInAnonymously(auth);
-                }
-            } catch (error) {
-                console.error("NavigateBasedOnAuth: Error with signInAnonymously:", error);
-            }
-        }
-        setInitialAuthAttempted(true); // Marcar que el intento inicial se hizo
-        // onAuthStateChanged se encargará de setUser y setLoading(false)
-    };
-
-    if (!initialAuthAttempted) { // Solo ejecutar una vez
-        attemptInitialAuth();
-    }
-
-    const unsubscribe = onAuthStateChanged(auth, (currentUser: User | null) => { 
-      setUser(currentUser);
-      setLoading(false); // Asegurar que loading se ponga en false después del primer chequeo de auth
-    });
-    return () => unsubscribe();
-  }, [initialAuthAttempted, auth]); // Depender de initialAuthAttempted para que no se re-ejecute innecesariamente
-
-  if (loading || !initialAuthAttempted) { 
-    return (
-        <div className="min-h-screen flex items-center justify-center bg-slate-900 text-white">
-            <Loader2 className="animate-spin h-8 w-8 text-sky-400 mr-3" />
-            <p>Inicializando Aplicación...</p>
-        </div>
-    );
-  }
-
-  return user ? <Navigate to="/dashboard" replace /> : <Navigate to="/auth" replace />;
+  
+  return !isAuthenticated ? <Outlet /> : <Navigate to="/dashboard" replace />;
 };
 
 const App: React.FC = () => {
-  if (!firebaseAppInstance || !firebaseAuthInstance) {
+  const auth = firebaseAuthInstance;
+  
+  if (!auth) {
     return (
-      <div className="min-h-screen bg-red-900 text-white flex flex-col items-center justify-center p-6 text-center">
-        <AlertTriangle className="h-16 w-16 text-yellow-300 mb-6" />
-        <h1 className="text-3xl font-bold mb-3">Error Crítico de Aplicación</h1>
-        <p className="text-lg mb-2">Fallo al inicializar Firebase.</p>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-slate-900 text-white p-6 text-center">
+        <AlertTriangle className="h-12 w-12 text-yellow-500 mb-4" />
+        <h1 className="text-2xl font-bold mb-2">Error de Configuración</h1>
+        <p className="text-lg text-slate-300 mb-4">No se pudo inicializar el servicio de autenticación.</p>
         <p className="text-md">Verifica la configuración de Firebase o contacta al soporte.</p>
-        <p className="text-sm text-yellow-200 mt-6">Revisa la consola del navegador para más detalles técnicos.</p>
       </div>
     );
   }
 
   return (
-    <Router>
-      <Routes>
-        <Route path="/auth" element={<PublicRoute />}>
-          <Route index element={<AuthScreen />} />
-        </Route>
-        
-        <Route path="/dashboard" element={<ProtectedRoute />}>
+    <Routes>
+      <Route path="/" element={<MainLayout />}>
+        <Route path="dashboard" element={<ProtectedRoute />}>
           <Route index element={<TeacherDashboard />} />
-          <Route path="create-activity/:pdfId" element={<CreateActivityScreen />} />
-          <Route path="chat/:pdfId" element={<ChatWithPdfScreen />} /> 
-          <Route path="create-exam/:pdfId" element={<CreateExamScreen />} /> {/* <-- RUTA AÑADIDA --> */}
+          <Route path="groups" element={<GroupsScreen />} />
+          <Route path="groups/:groupId" element={<GroupDetailScreen />} />
+          <Route path="groups/:groupId/exam/:examId" element={<GroupExamDetailScreen />} />
+          <Route path="assign-exam/:examId" element={<AssignExamToGroups />} />
+          <Route path="assigned-exams/:groupId" element={<AssignedExamsView />} />
+          <Route path="my-forms" element={<MyFormsScreen />} />
+          <Route path="my-saved-exams" element={<MySavedExamsScreen />} />
+          <Route path="chat/:pdfId" element={<ChatWithPdfScreen />} />
+          <Route path="tools/:pdfId" element={<ToolsScreen />} />
+          <Route path="activities/:pdfId" element={<ActivitiesScreen />} />
+          <Route path="create-exam/:pdfId" element={<CreateExamScreen />} />
         </Route>
-        
-        <Route path="/" element={<NavigateBasedOnAuth />} />
-        
-        <Route path="*" element={
-          <div className="min-h-screen flex flex-col items-center justify-center bg-slate-900 text-white p-4">
-            <AlertTriangle className="h-16 w-16 text-yellow-400 mb-5" />
-            <h1 className="text-4xl font-bold mb-4">404</h1>
-            <p className="text-xl text-slate-300 mb-6">Página No Encontrada</p>
-            <Link 
-                to="/" 
-                className="mt-4 px-6 py-3 bg-sky-500 text-white font-semibold rounded-lg hover:bg-sky-600 transition-colors flex items-center shadow-lg"
-            >
-              <Home size={20} className="mr-2" />
-              Volver al Inicio
-            </Link>
-          </div>
-        } />
-      </Routes>
-    </Router>
+        <Route path="login" element={<PublicRoute />}>
+          <Route index element={<LoginScreen />} />
+        </Route>
+        <Route path="register" element={<PublicRoute />}>
+          <Route index element={<RegisterScreen />} />
+        </Route>
+        <Route path="public/exam/*" element={<PublicExamRoute />} />
+        <Route path="*" element={<NotFoundScreen />} />
+      </Route>
+    </Routes>
   );
 };
 
