@@ -2,26 +2,35 @@
 import logging
 import os 
 from typing import List, Dict, Any, Optional, Union # Asegúrate que Union esté importado
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body, Depends, Query 
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body, Depends, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv # No es estrictamente necesario si config.py ya lo hace, pero no daña.
 import uvicorn
+import firebase_admin
+from firebase_admin import credentials, firestore
+from pydantic import BaseModel
 
 # Importaciones de servicios y modelos de la aplicación
 from app.services.pdf_processor import (
     # process_pdf_from_storage_url, # Descomenta si tienes este endpoint
     process_uploaded_pdf, 
     list_user_pdfs_from_db, 
-    delete_pdf_from_firestore_and_storage 
+    delete_pdf_from_firestore_and_storage,
+    extract_text_and_create_chunks
 )
 from app.services.rag_chain import get_rag_response, delete_pdf_vector_store_namespace
 from app.services.feedback_service import save_feedback 
 # Servicios de examen
 from app.services.exam_generator_service import (
     generate_exam_questions_service,
-    regenerate_one_question_service # <--- NUEVA IMPORTACIÓN
+    regenerate_one_question_service, # <--- NUEVA IMPORTACIÓN
+    get_pdf_content_for_exam_generation
 )
-
+from app.services.google_forms_service import create_google_form
+from app.services.csv_import_service import import_csv_responses
+from app.services.llm import call_gemini
+from .services.activities_service import activities_service
+from .services.tools_service import tools_service
 
 from app.models.schemas import (
     # PDFProcessRequest, 
@@ -39,7 +48,9 @@ from app.models.schemas import (
     QuestionOutput, # El Union de los tipos de pregunta de salida
     TrueFalseQuestionOutput,
     MultipleChoiceQuestionOutput,
-    OpenQuestionOutput
+    OpenQuestionOutput,
+    GoogleFormRequest,
+    GoogleFormResponse
 )
 from app.core.config import settings 
 
@@ -51,6 +62,13 @@ app = FastAPI(
     version=settings.PROJECT_VERSION,
     description="Backend para EduPDF Chatbot, incluyendo procesamiento de PDF, RAG y generación de exámenes."
 )
+
+# Inicializa Firebase Admin solo si no está inicializado
+if not firebase_admin._apps:
+    cred = credentials.Certificate(settings.FIREBASE_SERVICE_ACCOUNT_KEY)
+    firebase_admin.initialize_app(cred)
+
+db = firestore.client()
 
 if settings.BACKEND_CORS_ORIGINS:
     app.add_middleware(
@@ -253,6 +271,122 @@ async def regenerate_specific_question_endpoint(
         logger.error(f"Unexpected error in regenerate_specific_question_endpoint for PDF {request.pdf_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error interno inesperado al regenerar la pregunta: {str(e)}")
 
+@app.post("/api/v1/exam-generator/create-google-form", response_model=GoogleFormResponse, tags=["Exams"])
+async def create_google_form_endpoint(request: GoogleFormRequest):
+    """
+    Crea un formulario de Google a partir de un examen existente y lo comparte con el correo indicado.
+    """
+    logger.info(f"Received request to create Google Form for exam ID: {request.exam_id}")
+    try:
+        # Obtener los datos del examen desde Firestore
+        exam_ref = db.collection('exams').document(request.exam_id)
+        exam_doc = exam_ref.get()
+        
+        if not exam_doc.exists:
+            raise HTTPException(status_code=404, detail="Examen no encontrado")
+            
+        exam_data = exam_doc.to_dict()
+        
+        # Verificar que el usuario tenga permiso para acceder al examen
+        if exam_data['author_id'] != request.user_id:
+            raise HTTPException(status_code=403, detail="No tienes permiso para acceder a este examen")
+            
+        # Crear el formulario de Google y compartirlo
+        form_data = await create_google_form(exam_data, request.share_with_email)
+        
+        # Actualizar el examen con el link del formulario
+        exam_ref.update({
+            'google_form_link': form_data['google_form_link']
+        })
+        
+        return GoogleFormResponse(**form_data)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating Google Form for exam {request.exam_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error al crear el formulario de Google: {str(e)}")
+
+@app.post("/api/v1/exam-responses/import-csv", tags=["Exams"])
+async def import_csv_responses_endpoint(
+    file: UploadFile = File(...),
+    exam_id: str = Form(...),
+    group_id: str = Form(...)
+):
+    """
+    Importa respuestas desde un archivo CSV de Google Forms.
+    """
+    try:
+        file_content = await file.read()
+        result = import_csv_responses(file_content, exam_id, group_id)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/v1/activities/generate-word-search")
+async def generate_word_search(pdf_id: str):
+    try:
+        # Obtener el contenido del PDF desde la base de datos
+        pdf_content = await get_pdf_content_for_exam_generation(pdf_id, user_id="system")
+        if not pdf_content:
+            raise HTTPException(status_code=404, detail="PDF no encontrado")
+            
+        # Generar la sopa de letras
+        result = await activities_service.generate_word_search(pdf_content)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/v1/activities/generate-crossword")
+async def generate_crossword(pdf_id: str):
+    try:
+        pdf_content = await get_pdf_content_for_exam_generation(pdf_id, user_id="system")
+        if not pdf_content:
+            raise HTTPException(status_code=404, detail="PDF no encontrado")
+            
+        result = await activities_service.generate_crossword(pdf_content)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/v1/activities/generate-word-connection")
+async def generate_word_connection(pdf_id: str):
+    try:
+        pdf_content = await get_pdf_content_for_exam_generation(pdf_id, user_id="system")
+        if not pdf_content:
+            raise HTTPException(status_code=404, detail="PDF no encontrado")
+            
+        result = await activities_service.generate_word_connection(pdf_content)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class PdfIdRequest(BaseModel):
+    pdfId: str
+
+@app.post("/api/v1/tools/generate-concept-map")
+async def generate_concept_map(request: PdfIdRequest):
+    pdf_id = request.pdfId
+    try:
+        pdf_content = await get_pdf_content_for_exam_generation(pdf_id, user_id="system")
+        if not pdf_content:
+            raise HTTPException(status_code=404, detail="PDF no encontrado")
+        result = await tools_service.generate_concept_map(pdf_content)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/v1/tools/generate-mind-map")
+async def generate_mind_map(request: PdfIdRequest):
+    pdf_id = request.pdfId
+    try:
+        pdf_content = await get_pdf_content_for_exam_generation(pdf_id, user_id="system")
+        if not pdf_content:
+            raise HTTPException(status_code=404, detail="PDF no encontrado")
+        result = await tools_service.generate_mind_map(pdf_content)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     host_to_run = getattr(settings, "HOST", "127.0.0.1")

@@ -5,8 +5,9 @@ import json
 import httpx 
 import os
 from typing import List, Dict, Optional, Union, Literal, Any
+import re
 
-from pydantic import ValidationError
+from pydantic import ValidationError, BaseModel
 
 # Importaciones actualizadas desde tus schemas
 from app.models.schemas import (
@@ -31,6 +32,9 @@ from app.core.config import settings
 from app.services.rag_chain import get_vector_store_for_pdf_retrieval 
 
 logger = logging.getLogger(__name__)
+
+class PdfIdRequest(BaseModel):
+    pdfId: str
 
 # --- Función existente para obtener contenido del PDF ---
 async def get_pdf_content_for_exam_generation(pdf_id: str, user_id: str, sample_text_from_pdf: Optional[str] = None) -> str:
@@ -206,16 +210,25 @@ async def generate_questions_via_gemini_api(
             if (response_json.get("candidates") and response_json["candidates"][0].get("content") and
                 response_json["candidates"][0]["content"].get("parts") and response_json["candidates"][0]["content"]["parts"][0].get("text")):
                 json_text = response_json["candidates"][0]["content"]["parts"][0]["text"]
-                logger.debug(f"ExamGen LLM (Full Exam): Raw JSON text from Gemini: {json_text}")
-                
-                # Validar y parsear con Pydantic
-                llm_questions = LLMGeneratedQuestions.model_validate_json(json_text)
-                
+                logger.debug(f"ExamGen LLM (Full Exam): Raw JSON text from Gemini (primeros 1000 chars): {json_text[:1000]}...")
+
+                # Intentar arreglar JSON incompleto
+                last_brace = max(json_text.rfind('}'), json_text.rfind(']'))
+                if last_brace != -1 and last_brace < len(json_text) - 1:
+                    logger.warning(f"El JSON recibido parece estar cortado. Intentando recortar hasta el último cierre válido.")
+                    json_text = json_text[:last_brace+1]
+
+                try:
+                    llm_questions = LLMGeneratedQuestions.model_validate_json(json_text)
+                except Exception as e:
+                    logger.error(f"Error al parsear el JSON del LLM. JSON recibido (recortado): {json_text[:1000]}...")
+                    raise Exception("El modelo de IA devolvió una respuesta incompleta o inválida. Intenta con menos preguntas o vuelve a intentarlo.") from e
+
                 # Loguear conteos
                 if llm_questions.true_false_questions: logger.info(f"LLM Gen: {len(llm_questions.true_false_questions)} V/F")
                 if llm_questions.multiple_choice_questions: logger.info(f"LLM Gen: {len(llm_questions.multiple_choice_questions)} MC")
                 if llm_questions.open_questions: logger.info(f"LLM Gen: {len(llm_questions.open_questions)} Open")
-                if llm_questions.fill_in_the_blank_questions: logger.info(f"LLM Gen: {len(llm_questions.fill_in_the_blank_questions)} FITB") # <--- AÑADIDO
+                if llm_questions.fill_in_the_blank_questions: logger.info(f"LLM Gen: {len(llm_questions.fill_in_the_blank_questions)} FITB")
 
                 return llm_questions
             else: 

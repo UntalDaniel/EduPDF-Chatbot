@@ -222,3 +222,15 @@ class RegenerateQuestionRequest(BaseModel):
                 "existing_questions": []
             }
         }
+
+class GoogleFormRequest(BaseModel):
+    exam_id: str
+    user_id: str
+    share_with_email: str
+
+class GoogleFormResponse(BaseModel):
+    google_form_link: str
+    form_id: str
+
+class PdfIdRequest(BaseModel):
+    pdfId: str = Field(..., description="ID del PDF a procesar")

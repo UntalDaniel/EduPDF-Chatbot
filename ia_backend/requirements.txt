@@ -16,3 +16,9 @@ PyMuPDF # Para 'import fitz'
 numpy
 python-multipart
 langchain-openai>=0.1.0 # Si lo usas para alguna funcionalidad específica de OpenAI.
+
+# Google Forms API
+google-auth>=2.22.0
+google-auth-oauthlib>=1.0.0
+google-auth-httplib2>=0.1.0
+google-api-python-client>=2.95.0

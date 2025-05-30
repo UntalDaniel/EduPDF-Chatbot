@@ -74,6 +74,12 @@ class Settings:
     EXAM_GEN_LLM_TEMPERATURE: float = float(os.getenv("EXAM_GEN_LLM_TEMPERATURE", "0.4"))
     EXAM_GEN_LLM_TIMEOUT_SECONDS: float = float(os.getenv("EXAM_GEN_LLM_TIMEOUT_SECONDS", "180.0"))
 
+    # --- Google Forms Configuration ---
+    GOOGLE_FORMS_API_ENABLED: bool = os.getenv("GOOGLE_FORMS_API_ENABLED", "True").lower() == "true"
+    GOOGLE_FORMS_SCOPES: List[str] = [
+        'https://www.googleapis.com/auth/forms.body',
+        'https://www.googleapis.com/auth/forms.responses.readonly'
+    ]
 
     def __init__(self):
         # Procesar FIREBASE_SERVICE_ACCOUNT_KEY_RAW
