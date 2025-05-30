@@ -626,7 +626,6 @@ const CreateExamScreen: React.FC = () => {
     }
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 text-white p-4 md:p-8 font-sans">
-            <DashboardNavbar />
             <header className="mb-6 md:mb-8">
                  <div className="container mx-auto">
                     <Link to="/dashboard" className="inline-flex items-center text-sky-400 hover:text-sky-300 transition-colors group text-sm">

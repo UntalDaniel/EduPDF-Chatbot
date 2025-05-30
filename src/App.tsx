@@ -1,9 +1,9 @@
 // src/App.tsx
 import React from 'react';
-import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { Loader2, AlertTriangle } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
-import { Navbar } from '@/components/Navbar';
+import DashboardNavbar from '@/components/DashboardNavbar';
 import { auth as firebaseAuthInstance } from './firebase/firebaseConfig';
 
 // Importa tus componentes de pantalla
@@ -30,10 +30,13 @@ import NotFoundScreen from './screens/NotFoundScreen';
 
 // Componente de diseño principal que incluye la barra de navegación
 const MainLayout = () => {
+  const location = useLocation();
+  const isExamRoute = location.pathname.includes('/create-exam/');
+
   return (
-    <div className="min-h-screen bg-slate-50 dark:bg-slate-900">
-      <Navbar />
-      <main className="container mx-auto p-4 pt-20">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-gray-900 text-slate-100 font-sans">
+      {!isExamRoute && <DashboardNavbar />}
+      <main className={`container mx-auto p-4 ${!isExamRoute ? 'pt-20' : ''}`}>
         <Outlet />
       </main>
     </div>

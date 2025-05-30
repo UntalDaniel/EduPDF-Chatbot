@@ -8,7 +8,7 @@ import { getPdfsByTeacher } from '../firebase/firestoreService';
 import type { PdfMetadata } from '../firebase/firestoreService';
 
 const DashboardNavbar: React.FC = () => {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
   const [modalOpen, setModalOpen] = useState(false);
@@ -48,9 +48,14 @@ const DashboardNavbar: React.FC = () => {
     setModalType(null);
   };
 
-  // Aquí podrías tener una lógica para saber si el usuario es docente
-  // Por ahora, si está autenticado, se asume docente
-  const isTeacher = !!user;
+  const handleLogout = async () => {
+    try {
+      await logout();
+      navigate('/login');
+    } catch (error) {
+      console.error('Error al cerrar sesión:', error);
+    }
+  };
 
   return (
     <nav className="bg-slate-900 border-b border-slate-800 shadow-lg sticky top-0 z-40">
@@ -59,7 +64,7 @@ const DashboardNavbar: React.FC = () => {
           <Link to="/dashboard" className="flex items-center gap-2 text-sky-400 font-bold text-2xl hover:text-sky-300 transition-colors">
             <BookOpen className="w-7 h-7" /> EduPDF
           </Link>
-          {isTeacher && (
+          {user && (
             <>
               <Link
                 to="/dashboard/groups"
@@ -72,16 +77,38 @@ const DashboardNavbar: React.FC = () => {
                 <Users className="w-5 h-5" />
                 <span>Grupos</span>
               </Link>
-              <Link to="/dashboard/my-forms" className={`flex items-center gap-1 text-base font-medium hover:text-sky-300 transition-colors ${location.pathname.startsWith('/dashboard/my-forms') ? 'text-sky-300' : 'text-sky-100'}`}>
+              <Link 
+                to="/dashboard/my-forms" 
+                className={`flex items-center gap-1 text-base font-medium hover:text-sky-300 transition-colors ${
+                  location.pathname.startsWith('/dashboard/my-forms') ? 'text-sky-300' : 'text-sky-100'
+                }`}
+              >
                 <FileText className="w-5 h-5 mr-1" /> Mis Formatos
               </Link>
-              <Link to="/dashboard/my-saved-exams" className={`flex items-center gap-1 text-base font-medium hover:text-sky-300 transition-colors ${location.pathname.startsWith('/dashboard/my-saved-exams') ? 'text-sky-300' : 'text-sky-100'}`}>
+              <Link 
+                to="/dashboard/my-saved-exams" 
+                className={`flex items-center gap-1 text-base font-medium hover:text-sky-300 transition-colors ${
+                  location.pathname.startsWith('/dashboard/my-saved-exams') ? 'text-sky-300' : 'text-sky-100'
+                }`}
+              >
                 <List className="w-5 h-5 mr-1" /> Mis Exámenes Guardados
               </Link>
-              <button type="button" onClick={() => handleNavClick('activities')} className={`flex items-center gap-1 text-base font-medium hover:text-sky-300 transition-colors bg-transparent border-0 p-0 m-0 ${location.pathname.startsWith('/dashboard/activities') ? 'text-sky-300' : 'text-sky-100'}`}>
+              <button 
+                type="button" 
+                onClick={() => handleNavClick('activities')} 
+                className={`flex items-center gap-1 text-base font-medium hover:text-sky-300 transition-colors bg-transparent border-0 p-0 m-0 ${
+                  location.pathname.startsWith('/dashboard/activities') ? 'text-sky-300' : 'text-sky-100'
+                }`}
+              >
                 <Puzzle className="w-5 h-5 mr-1" /> Actividades
               </button>
-              <button type="button" onClick={() => handleNavClick('tools')} className={`flex items-center gap-1 text-base font-medium hover:text-sky-300 transition-colors bg-transparent border-0 p-0 m-0 ${location.pathname.startsWith('/dashboard/tools') ? 'text-sky-300' : 'text-sky-100'}`}>
+              <button 
+                type="button" 
+                onClick={() => handleNavClick('tools')} 
+                className={`flex items-center gap-1 text-base font-medium hover:text-sky-300 transition-colors bg-transparent border-0 p-0 m-0 ${
+                  location.pathname.startsWith('/dashboard/tools') ? 'text-sky-300' : 'text-sky-100'
+                }`}
+              >
                 <Wrench className="w-5 h-5 mr-1" /> Herramientas
               </button>
             </>
@@ -95,7 +122,7 @@ const DashboardNavbar: React.FC = () => {
             </div>
           )}
           <button
-            onClick={() => { window.location.href = '/logout'; }}
+            onClick={handleLogout}
             className="bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 rounded-lg flex items-center gap-2 text-base shadow-md transition-all duration-200"
           >
             <LogOut className="w-5 h-5" /> Salir
